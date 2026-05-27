@@ -412,18 +412,33 @@
       return new Promise(function (res) { setTimeout(res, ms); });
     }
 
-    // Fetch one batch, retrying on rate-limit (429) with exponential backoff
-    // (honouring a Retry-After header when present).
+    // Fetch one batch with retries (exponential backoff) on:
+    //  - rate limits (429) and server errors (5xx), honouring Retry-After;
+    //  - network failures ("Failed to fetch", aborted/timed-out requests).
+    // A per-attempt timeout aborts a hung request so it can be retried.
+    var MAX_RETRIES = 5;
     function fetchBatch(url, attempt) {
       attempt = attempt || 0;
-      return fetch(url).then(function (r) {
-        if (r.status === 429 && attempt < 5) {
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, 20000);
+      return fetch(url, { signal: ctrl.signal }).then(function (r) {
+        clearTimeout(timer);
+        if ((r.status === 429 || r.status >= 500) && attempt < MAX_RETRIES) {
           var ra = parseInt(r.headers.get('Retry-After'), 10);
-          var wait = isFinite(ra) ? ra * 1000 : Math.pow(2, attempt) * 1000;
+          var wait = isFinite(ra) ? ra * 1000 : Math.pow(2, attempt) * 800;
           return delay(wait).then(function () { return fetchBatch(url, attempt + 1); });
         }
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
+      }, function (netErr) {
+        // fetch() rejected: network failure or aborted timeout -> retry.
+        clearTimeout(timer);
+        if (attempt < MAX_RETRIES) {
+          return delay(Math.pow(2, attempt) * 800).then(function () {
+            return fetchBatch(url, attempt + 1);
+          });
+        }
+        throw netErr;
       });
     }
 
@@ -482,9 +497,14 @@
         setPlaying(true);   // auto-play on load
       }).catch(function (err) {
         validTimeEl.textContent = 'Forecast unavailable';
-        var msg = /429/.test(err.message)
-          ? 'Open-Meteo rate limit reached (HTTP 429). Wait a minute and press Retry, or reduce the number of arrows.'
-          : 'Could not load the ECMWF forecast (' + err.message + '). Check your internet connection.';
+        var msg;
+        if (/429/.test(err.message)) {
+          msg = 'Open-Meteo rate limit reached (HTTP 429). Wait a minute and press Retry, or reduce the number of arrows.';
+        } else if (/Failed to fetch|NetworkError|aborted|abort/i.test(err.message || err.name)) {
+          msg = 'Network error reaching api.open-meteo.com — it may be offline, blocked on your network, or blocked by a browser ad-blocker/privacy extension. Press Retry.';
+        } else {
+          msg = 'Could not load the ECMWF forecast (' + err.message + '). Check your internet connection.';
+        }
         statusEl.textContent = msg;
         retryBtn.style.display = 'inline-block';
       });
