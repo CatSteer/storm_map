@@ -505,11 +505,14 @@
 
     // ---- Render loop ------------------------------------------------------
     function render(now) {
-      // Advance the forecast sub-frame while playing.
-      if (playing && frameCount > 0 && now - lastStep >= STEP_MS) {
+      // Advance a continuous (fractional) sub-frame position while playing, so
+      // wind and rain are interpolated every frame for smooth motion.
+      if (playing && frameCount > 0 && subMax > 0) {
+        var dt = Math.min(now - lastStep, 100);   // clamp jumps after inactivity
         lastStep = now;
-        frame = (frame + 1) % (subMax + 1);
-        slider.value = String(frame);
+        frame += dt / STEP_MS;
+        if (frame >= subMax) frame -= subMax;     // loop back to the start
+        slider.value = String(Math.round(frame));
         updateLabel();
       }
 
