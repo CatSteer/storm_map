@@ -81,8 +81,9 @@
 
   <div id="panel">
     <h1>Sydney wind</h1>
-    <p>A gust sweeps east&nbsp;&rarr;&nbsp;west across the middle. Arrows nearest
-       the centreline darken, grow and turn into the gust, then relax as it passes.</p>
+    <p>A gust sweeps in a U&mdash;from the top-right corner, down through the
+       bottom, up to the top-left. Arrows it passes darken, grow and turn to
+       follow it, then relax as it leaves.</p>
     <button id="gust-btn" type="button">Trigger gust</button>
   </div>
 
@@ -127,10 +128,10 @@
     var IDLE_RGB = [190, 190, 190];   // light grey
     var PEAK_RGB = [40, 40, 40];      // near-black
 
-    // Pointing direction as a screen angle (atan2(dy, dx), y points down).
-    // South-west = left + down = (-1, +1). Due west = (-1, 0).
-    var IDLE_ANGLE = Math.atan2(1, -1);  // ~135deg
-    var PEAK_ANGLE = Math.atan2(0, -1);  // 180deg (due west)
+    // Resting pointing direction as a screen angle (atan2(dy, dx), y down).
+    // South-west = left + down = (-1, +1). During a gust the target direction
+    // is the gust's travel direction (the tangent of its U-shaped path).
+    var IDLE_ANGLE = Math.atan2(1, -1);  // ~135deg (south-west)
 
     var grid = [];      // {x, y} points in CSS pixels
     var W = 0, H = 0;   // CSS-pixel size of the canvas
@@ -190,7 +191,11 @@
     }
 
     // ---- Gust animation ---------------------------------------------------
-    var GUST_DURATION = 3500;   // ms for a full east -> west sweep
+    // The gust is a localised blob that travels a U-shaped path: starting at
+    // the top-right corner, dipping down through the bottom-middle, and rising
+    // to the top-left corner. Arrows it passes darken, grow and turn to point
+    // in the gust's direction of travel, then relax back as it leaves.
+    var GUST_DURATION = 4000;   // ms for the full U-shaped sweep
     var gustStart = null;       // timestamp, or null when idle
     var btn = document.getElementById('gust-btn');
 
@@ -208,7 +213,11 @@
       ctx.clearRect(0, 0, W, H);
 
       var active = gustStart !== null;
-      var gustX = 0, hSigma = W * 0.12, vSigma = H * 0.22, centreY = H / 2;
+      var blobSigma = Math.min(W, H) * 0.15;   // radius of the gust blob
+      var off = blobSigma;                     // enter/exit just off-screen
+      var yMax = H - MARGIN;                    // bottom of the U
+      // Gust blob centre and its travel direction (tangent of the path).
+      var gx = 0, gy = 0, gustAngle = 0;
 
       if (active) {
         var progress = (now - gustStart) / GUST_DURATION;
@@ -217,21 +226,31 @@
           active = false;
           btn.disabled = false;
         } else {
-          // East (right) -> west (left): start just off the right edge,
-          // finish just off the left edge.
-          gustX = lerp(W + hSigma, -hSigma, progress);
+          // U-shaped path: top-right corner -> bottom-middle -> top-left corner.
+          gx = lerp(W + off, -off, progress);          // moves right -> left
+          gy = yMax * (1 - Math.pow(2 * progress - 1, 2)); // 0 at ends, max mid
+          // Tangent (velocity) of the path = direction the gust is moving.
+          var dgx = -(W + 2 * off);                    // constant, leftward
+          var dgy = -4 * yMax * (2 * progress - 1);     // down out, up back
+          gustAngle = Math.atan2(dgy, dgx);
         }
       }
+
+      // Idle direction as a unit vector (lerping vectors keeps rotation short).
+      var ix = Math.cos(IDLE_ANGLE), iy = Math.sin(IDLE_ANGLE);
+      var gxv = Math.cos(gustAngle), gyv = Math.sin(gustAngle);
 
       for (var i = 0; i < grid.length; i++) {
         var p = grid[i];
         var intensity = 0;
         if (active) {
-          var hFactor = gaussian(p.x - gustX, hSigma);
-          var vFactor = gaussian(p.y - centreY, vSigma);
-          intensity = hFactor * vFactor;
+          var dx = p.x - gx, dy = p.y - gy;
+          intensity = gaussian(Math.sqrt(dx * dx + dy * dy), blobSigma);
         }
-        var angle = lerp(IDLE_ANGLE, PEAK_ANGLE, intensity);
+        var angle = Math.atan2(
+          lerp(iy, gyv, intensity),
+          lerp(ix, gxv, intensity)
+        );
         var length = lerp(IDLE_LEN, PEAK_LEN, intensity);
         var width = lerp(IDLE_WIDTH, PEAK_WIDTH, intensity);
         drawArrow(p.x, p.y, angle, length, mixColor(intensity), width);

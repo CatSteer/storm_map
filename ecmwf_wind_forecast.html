@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ECMWF Wind Forecast — SE Australia</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    #map {
+      position: absolute;
+      inset: 0;
+      background: #f6f6f4;
+    }
+    #arrows {
+      position: absolute;
+      inset: 0;
+      z-index: 500;
+      pointer-events: none;
+    }
+    #panel {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      border-radius: 10px;
+      padding: 12px 14px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+      width: 260px;
+    }
+    #panel h1 {
+      font-size: 15px;
+      margin: 0 0 2px 0;
+      font-weight: 600;
+      color: #222;
+    }
+    #panel .sub {
+      font-size: 11px;
+      color: #777;
+      margin: 0 0 10px 0;
+    }
+    #valid-time {
+      font-size: 13px;
+      font-weight: 600;
+      color: #2b3a4a;
+      margin: 0 0 8px 0;
+      min-height: 16px;
+    }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #play-btn {
+      appearance: none;
+      border: none;
+      background: #2b6cb0;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 7px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      white-space: nowrap;
+    }
+    #play-btn:hover { background: #245a93; }
+    #play-btn:disabled { background: #9bb8d6; cursor: default; }
+    #time-slider {
+      flex: 1;
+      cursor: pointer;
+    }
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      color: #777;
+      margin-top: 10px;
+    }
+    .legend .bar {
+      flex: 1;
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(to right, rgb(200,200,200), rgb(40,40,40));
+    }
+    .credit {
+      font-size: 10px;
+      color: #999;
+      margin-top: 10px;
+      line-height: 1.4;
+    }
+    .credit a { color: #999; }
+    #status {
+      font-size: 12px;
+      color: #b04a2b;
+      margin: 6px 0 0 0;
+      line-height: 1.4;
+    }
+    #retry-btn {
+      appearance: none;
+      border: 1px solid #b04a2b;
+      background: #fff;
+      color: #b04a2b;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 7px;
+      cursor: pointer;
+      margin-top: 6px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <canvas id="arrows"></canvas>
+
+  <div id="panel">
+    <h1>ECMWF wind forecast</h1>
+    <p class="sub">10&nbsp;m wind &middot; SE Australia</p>
+    <p id="valid-time">Loading ECMWF forecast&hellip;</p>
+    <div class="controls">
+      <button id="play-btn" type="button" disabled>Play</button>
+      <input id="time-slider" type="range" min="0" max="0" value="0" step="1" disabled />
+    </div>
+    <div class="legend">
+      <span>calm</span><span class="bar"></span><span>strong</span>
+    </div>
+    <p id="status"></p>
+    <button id="retry-btn" type="button">Retry</button>
+    <p class="credit">
+      Wind: ECMWF IFS (open data) via
+      <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>
+      &middot; Map &copy; CARTO / OpenStreetMap
+    </p>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script>
+    // ---- Domain: SE Australia (Sydney / Canberra / Melbourne region) ------
+    var BOUNDS = L.latLngBounds([[-39, 144], [-28, 154]]);
+    var GRID_STEP = 1.1;   // degrees between arrow grid points (~110 points)
+
+    // ---- Map: locked CartoDB Positron -------------------------------------
+    var map = L.map('map', {
+      dragging: false,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      touchZoom: false,
+      boxZoom: false,
+      keyboard: false,
+      zoomControl: false,
+      attributionControl: true
+    });
+    map.fitBounds(BOUNDS);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ' +
+        'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 20
+    }).addTo(map);
+
+    // ---- Arrow overlay (same style as the gust map) -----------------------
+    var canvas = document.getElementById('arrows');
+    var ctx = canvas.getContext('2d');
+
+    var IDLE_LEN = 10, PEAK_LEN = 32;          // calm -> strong arrow length
+    var IDLE_WIDTH = 1.4, PEAK_WIDTH = 3;
+    var CALM_RGB = [200, 200, 200];            // light grey (calm)
+    var STRONG_RGB = [40, 40, 40];             // near-black (strong)
+    var SMAX = 55;                             // km/h mapped to the darkest/biggest
+
+    var W = 0, H = 0;
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function clamp01(t) { return t < 0 ? 0 : (t > 1 ? 1 : t); }
+
+    function mixColor(t) {
+      var r = Math.round(lerp(CALM_RGB[0], STRONG_RGB[0], t));
+      var g = Math.round(lerp(CALM_RGB[1], STRONG_RGB[1], t));
+      var b = Math.round(lerp(CALM_RGB[2], STRONG_RGB[2], t));
+      return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
+
+    // Meteorological "from" bearing (deg, clockwise from north) -> screen angle.
+    // Wind blows TO (from + 180); north = up (-y), east = right (+x).
+    function bearingToScreenAngle(fromDeg) {
+      var toRad = (fromDeg + 180) * Math.PI / 180;
+      return Math.atan2(-Math.cos(toRad), Math.sin(toRad));
+    }
+
+    function speedToIntensity(speed) {
+      return clamp01(speed / SMAX);
+    }
+
+    function drawArrow(x, y, angle, length, color, width) {
+      var dx = Math.cos(angle), dy = Math.sin(angle);
+      var tailX = x - dx * length / 2, tailY = y - dy * length / 2;
+      var headX = x + dx * length / 2, headY = y + dy * length / 2;
+      var ah = Math.max(4, length * 0.32);
+      var spread = 0.42;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(headX, headY);
+      ctx.moveTo(headX, headY);
+      ctx.lineTo(headX - ah * Math.cos(angle - spread), headY - ah * Math.sin(angle - spread));
+      ctx.moveTo(headX, headY);
+      ctx.lineTo(headX - ah * Math.cos(angle + spread), headY - ah * Math.sin(angle + spread));
+      ctx.stroke();
+    }
+
+    // ---- Geo grid of arrow points -----------------------------------------
+    // Each point: { lat, lon, sx, sy (screen px), speeds[], dirs[] }.
+    var points = [];
+
+    function buildGridPoints() {
+      points = [];
+      var s = BOUNDS.getSouth(), n = BOUNDS.getNorth();
+      var w = BOUNDS.getWest(), e = BOUNDS.getEast();
+      for (var lat = s; lat <= n + 1e-9; lat += GRID_STEP) {
+        for (var lon = w; lon <= e + 1e-9; lon += GRID_STEP) {
+          points.push({ lat: lat, lon: lon, sx: 0, sy: 0, speeds: null, dirs: null });
+        }
+      }
+    }
+
+    function resizeCanvas() {
+      var rect = map.getContainer().getBoundingClientRect();
+      W = rect.width;
+      H = rect.height;
+      var dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function projectPoints() {
+      for (var i = 0; i < points.length; i++) {
+        var pt = map.latLngToContainerPoint([points[i].lat, points[i].lon]);
+        points[i].sx = pt.x;
+        points[i].sy = pt.y;
+      }
+    }
+
+    // ---- Forecast data / animation state ----------------------------------
+    var times = [];          // ISO local time strings, one per frame
+    var frameCount = 0;
+    var frame = 0;
+    var playing = false;
+    var lastStep = 0;
+    var FRAME_MS = 500;       // ~2 forecast hours per second
+
+    var playBtn = document.getElementById('play-btn');
+    var slider = document.getElementById('time-slider');
+    var validTimeEl = document.getElementById('valid-time');
+    var statusEl = document.getElementById('status');
+    var retryBtn = document.getElementById('retry-btn');
+
+    function fmtTime(iso) {
+      // iso like "2026-05-27T15:00"; render as "Wed 27 May, 15:00".
+      var d = new Date(iso);
+      if (isNaN(d)) return iso;
+      var opts = { weekday: 'short', day: 'numeric', month: 'short',
+                   hour: '2-digit', minute: '2-digit', hour12: false };
+      return d.toLocaleString('en-AU', opts);
+    }
+
+    function updateLabel() {
+      if (frameCount > 0) validTimeEl.textContent = fmtTime(times[frame]);
+    }
+
+    // ---- Fetch ECMWF wind from Open-Meteo (runs in the browser) -----------
+    function buildUrl() {
+      var lats = points.map(function (p) { return p.lat.toFixed(3); }).join(',');
+      var lons = points.map(function (p) { return p.lon.toFixed(3); }).join(',');
+      return 'https://api.open-meteo.com/v1/forecast'
+        + '?latitude=' + lats
+        + '&longitude=' + lons
+        + '&hourly=wind_speed_10m,wind_direction_10m'
+        + '&wind_speed_unit=kmh'
+        + '&models=ecmwf_ifs025'
+        + '&forecast_days=3'
+        + '&timezone=Australia%2FSydney';
+    }
+
+    function loadForecast() {
+      statusEl.textContent = '';
+      retryBtn.style.display = 'none';
+      validTimeEl.textContent = 'Loading ECMWF forecast…';
+
+      fetch(buildUrl())
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          // Multiple coordinates -> array; single -> object. Normalise to array.
+          var list = Array.isArray(data) ? data : [data];
+          if (list.length !== points.length) {
+            throw new Error('Expected ' + points.length + ' locations, got ' + list.length);
+          }
+          times = list[0].hourly.time;
+          frameCount = times.length;
+          for (var i = 0; i < points.length; i++) {
+            var h = list[i].hourly;
+            points[i].speeds = h.wind_speed_10m;
+            points[i].dirs = h.wind_direction_10m;
+          }
+          frame = 0;
+          slider.max = String(frameCount - 1);
+          slider.value = '0';
+          slider.disabled = false;
+          playBtn.disabled = false;
+          updateLabel();
+          setPlaying(true);   // auto-play on load
+        })
+        .catch(function (err) {
+          validTimeEl.textContent = 'Forecast unavailable';
+          statusEl.textContent = 'Could not load the ECMWF forecast ('
+            + err.message + '). Check your internet connection.';
+          retryBtn.style.display = 'inline-block';
+        });
+    }
+
+    // ---- Controls ---------------------------------------------------------
+    function setPlaying(on) {
+      playing = on && frameCount > 0;
+      playBtn.textContent = playing ? 'Pause' : 'Play';
+      lastStep = performance.now();
+    }
+    playBtn.addEventListener('click', function () { setPlaying(!playing); });
+    retryBtn.addEventListener('click', loadForecast);
+    slider.addEventListener('input', function () {
+      frame = parseInt(slider.value, 10) || 0;
+      updateLabel();
+    });
+
+    // ---- Render loop ------------------------------------------------------
+    function render(now) {
+      // Advance the forecast frame while playing.
+      if (playing && frameCount > 0 && now - lastStep >= FRAME_MS) {
+        lastStep = now;
+        frame = (frame + 1) % frameCount;
+        slider.value = String(frame);
+        updateLabel();
+      }
+
+      ctx.clearRect(0, 0, W, H);
+
+      var haveData = frameCount > 0;
+      for (var i = 0; i < points.length; i++) {
+        var p = points[i];
+        var intensity = 0, angle;
+        if (haveData && p.speeds) {
+          var speed = p.speeds[frame];
+          var dir = p.dirs[frame];
+          if (speed == null || dir == null) continue;
+          intensity = speedToIntensity(speed);
+          angle = bearingToScreenAngle(dir);
+        } else {
+          continue;   // nothing to draw until data arrives
+        }
+        var length = lerp(IDLE_LEN, PEAK_LEN, intensity);
+        var width = lerp(IDLE_WIDTH, PEAK_WIDTH, intensity);
+        drawArrow(p.sx, p.sy, angle, length, mixColor(intensity), width);
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    // ---- Wire up ----------------------------------------------------------
+    function relayout() {
+      resizeCanvas();
+      projectPoints();
+    }
+    window.addEventListener('resize', relayout);
+    map.whenReady(function () {
+      buildGridPoints();
+      relayout();
+      requestAnimationFrame(render);
+      loadForecast();
+    });
+  </script>
+</body>
+</html>
