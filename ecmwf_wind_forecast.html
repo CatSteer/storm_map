@@ -78,6 +78,20 @@
     }
     #play-btn:hover { background: #245a93; }
     #play-btn:disabled { background: #9bb8d6; cursor: default; }
+    #rain-btn {
+      appearance: none;
+      border: 1px solid #2b6cb0;
+      background: #fff;
+      color: #2b6cb0;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #rain-btn.active { background: #2b6cb0; color: #fff; }
+    #rain-btn:disabled { opacity: 0.5; cursor: default; }
     #time-slider {
       flex: 1;
       cursor: pointer;
@@ -139,11 +153,12 @@
     <div class="controls">
       <button id="play-btn" type="button" disabled>Play</button>
       <input id="time-slider" type="range" min="0" max="0" value="0" step="1" disabled />
+      <button id="rain-btn" type="button" disabled>Rain</button>
     </div>
     <div class="legend">
       <span>calm</span><span class="bar"></span><span>strong</span>
     </div>
-    <div class="legend">
+    <div class="legend" id="rain-legend" style="display:none">
       <span>rain</span><span class="bar bar-rain"></span><span>heavy</span>
     </div>
     <p id="status"></p>
@@ -301,12 +316,16 @@
     var playing = false;
     var lastStep = 0;
     var STEP_MS = 37.5;       // wall-clock time per sub-frame
+    var showRain = false;     // rain heatmap visible?
+    var rainLoaded = false;   // precipitation fetched yet?
 
     var playBtn = document.getElementById('play-btn');
     var slider = document.getElementById('time-slider');
     var validTimeEl = document.getElementById('valid-time');
     var statusEl = document.getElementById('status');
     var retryBtn = document.getElementById('retry-btn');
+    var rainBtn = document.getElementById('rain-btn');
+    var rainLegend = document.getElementById('rain-legend');
 
     function fmtDate(d) {
       if (isNaN(d)) return '';
@@ -395,14 +414,14 @@
     // server length limits, regardless of how many grid points there are.
     var BATCH = 150;          // locations per request
 
-    function buildUrl(pts) {
+    function buildUrl(pts, hourlyVars) {
       // 2 decimals (~1 km) is finer than the 0.25 deg model grid.
       var lats = pts.map(function (p) { return p.lat.toFixed(2); }).join(',');
       var lons = pts.map(function (p) { return p.lon.toFixed(2); }).join(',');
       return 'https://api.open-meteo.com/v1/forecast'
         + '?latitude=' + lats
         + '&longitude=' + lons
-        + '&hourly=wind_speed_10m,wind_direction_10m,precipitation'
+        + '&hourly=' + hourlyVars
         + '&wind_speed_unit=kmh'
         + '&models=ecmwf_ifs025'
         + '&forecast_days=3'
@@ -443,71 +462,92 @@
       });
     }
 
-    function applyBatch(data, offset, isFirst) {
-      // Multiple coordinates -> array; single -> object. Normalise.
-      var list = Array.isArray(data) ? data : [data];
-      if (isFirst) {
-        times = list[0].hourly.time;
-        frameCount = times.length;
+    // Fetch one variable set for every point, in sequential batches. Calls
+    // assign(point, hourly) per location; resolves with the first time axis.
+    function fetchSeries(hourlyVars, assign, onProgress) {
+      var batches = [];
+      for (var i = 0; i < points.length; i += BATCH) {
+        batches.push(points.slice(i, i + BATCH));
       }
-      for (var j = 0; j < list.length; j++) {
-        var h = list[j].hourly;
-        var p = points[offset + j];
-        p.speeds = h.wind_speed_10m;
-        p.dirs = h.wind_direction_10m;
-        p.precip = h.precipitation;
-      }
-      return list.length;
+      var offset = 0, firstTimes = null;
+      var chain = Promise.resolve();
+      batches.forEach(function (b, bi) {
+        chain = chain.then(function () {
+          if (onProgress) onProgress(bi + 1, batches.length);
+          return fetchBatch(buildUrl(b, hourlyVars));
+        }).then(function (data) {
+          var list = Array.isArray(data) ? data : [data];
+          if (bi === 0) firstTimes = list[0].hourly.time;
+          for (var j = 0; j < list.length; j++) assign(points[offset + j], list[j].hourly);
+          offset += list.length;
+          if (bi < batches.length - 1) return delay(350);
+        });
+      });
+      return chain.then(function () {
+        if (offset !== points.length) {
+          throw new Error('Expected ' + points.length + ' locations, got ' + offset);
+        }
+        return firstTimes;
+      });
     }
 
+    function describeError(err) {
+      if (/429/.test(err.message)) {
+        return 'Open-Meteo rate limit reached (HTTP 429). Wait a minute and try again, or reduce the number of arrows.';
+      }
+      if (/Failed to fetch|NetworkError|aborted|abort/i.test(err.message || err.name)) {
+        return 'Network error reaching api.open-meteo.com — it may be offline, blocked on your network, or blocked by a browser ad-blocker/privacy extension.';
+      }
+      return 'Could not load the ECMWF forecast (' + err.message + ').';
+    }
+
+    // Wind only — rain is fetched lazily when the user clicks the Rain button.
     function loadForecast() {
       statusEl.textContent = '';
       retryBtn.style.display = 'none';
       validTimeEl.textContent = 'Loading ECMWF forecast…';
 
-      var batches = [];
-      for (var i = 0; i < points.length; i += BATCH) {
-        batches.push(points.slice(i, i + BATCH));
-      }
-
-      // Fetch batches sequentially with a small gap so we don't trip
-      // Open-Meteo's burst rate limit.
-      var offset = 0;
-      var chain = Promise.resolve();
-      batches.forEach(function (b, bi) {
-        chain = chain.then(function () {
-          validTimeEl.textContent = 'Loading ECMWF forecast… (' + (bi + 1) + '/' + batches.length + ')';
-          return fetchBatch(buildUrl(b));
-        }).then(function (data) {
-          offset += applyBatch(data, offset, bi === 0);
-          if (bi < batches.length - 1) return delay(350);
-        });
-      });
-
-      chain.then(function () {
-        if (offset !== points.length) {
-          throw new Error('Expected ' + points.length + ' locations, got ' + offset);
-        }
+      fetchSeries('wind_speed_10m,wind_direction_10m', function (p, h) {
+        p.speeds = h.wind_speed_10m;
+        p.dirs = h.wind_direction_10m;
+      }, function (i, n) {
+        validTimeEl.textContent = 'Loading ECMWF forecast… (' + i + '/' + n + ')';
+      }).then(function (t) {
+        times = t;
+        frameCount = times.length;
         frame = 0;
         subMax = (frameCount - 1) * SUBSTEPS;
         slider.max = String(subMax);
         slider.value = '0';
         slider.disabled = false;
         playBtn.disabled = false;
+        rainBtn.disabled = false;
         updateLabel();
         setPlaying(true);   // auto-play on load
       }).catch(function (err) {
         validTimeEl.textContent = 'Forecast unavailable';
-        var msg;
-        if (/429/.test(err.message)) {
-          msg = 'Open-Meteo rate limit reached (HTTP 429). Wait a minute and press Retry, or reduce the number of arrows.';
-        } else if (/Failed to fetch|NetworkError|aborted|abort/i.test(err.message || err.name)) {
-          msg = 'Network error reaching api.open-meteo.com — it may be offline, blocked on your network, or blocked by a browser ad-blocker/privacy extension. Press Retry.';
-        } else {
-          msg = 'Could not load the ECMWF forecast (' + err.message + '). Check your internet connection.';
-        }
-        statusEl.textContent = msg;
+        statusEl.textContent = describeError(err) + ' Press Retry.';
         retryBtn.style.display = 'inline-block';
+      });
+    }
+
+    // Lazily fetch precipitation the first time Rain is enabled.
+    function loadRain() {
+      rainBtn.disabled = true;
+      rainBtn.textContent = 'Rain…';
+      statusEl.textContent = '';
+      fetchSeries('precipitation', function (p, h) {
+        p.precip = h.precipitation;
+      }).then(function () {
+        rainLoaded = true;
+        showRain = true;
+        rainBtn.disabled = false;
+        updateRainBtn();
+      }).catch(function (err) {
+        rainBtn.disabled = false;
+        showRain = false;
+        updateRainBtn();
+        statusEl.textContent = 'Rain unavailable: ' + describeError(err);
       });
     }
 
@@ -522,6 +562,17 @@
     slider.addEventListener('input', function () {
       frame = parseInt(slider.value, 10) || 0;
       updateLabel();
+    });
+
+    function updateRainBtn() {
+      rainBtn.textContent = rainLoaded ? (showRain ? 'Rain: on' : 'Rain: off') : 'Rain';
+      rainBtn.classList.toggle('active', showRain);
+      rainLegend.style.display = showRain ? 'flex' : 'none';
+    }
+    rainBtn.addEventListener('click', function () {
+      if (!rainLoaded) { loadRain(); return; }   // fetch precip on first use
+      showRain = !showRain;                        // then just toggle display
+      updateRainBtn();
     });
 
     // ---- Render loop ------------------------------------------------------
@@ -545,7 +596,7 @@
       var i, p;
 
       // Rain heatmap underneath (light blue -> dark blue -> dark purple).
-      for (i = 0; i < points.length; i++) {
+      for (i = 0; showRain && i < points.length; i++) {
         p = points[i];
         if (!p.precip) continue;
         var precip = sampleScalar(p.precip, idx);
