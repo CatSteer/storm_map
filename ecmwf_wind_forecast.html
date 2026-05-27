@@ -195,6 +195,7 @@
     var CALM_RGB = [200, 200, 200];            // light grey (calm)
     var STRONG_RGB = [40, 40, 40];             // near-black (strong)
     var SMAX = 55;                             // km/h mapped to the darkest/biggest
+    var SIZE_GAMMA = 3;                        // >1 keeps big arrows for the strongest winds only
 
     // Rain heatmap: light blue -> dark blue -> dark purple. PMAX (mm/h) is the
     // rate mapped to the darkest purple; rates below PMIN draw nothing.
@@ -558,8 +559,10 @@
         var wind = sampleWind(p, idx);
         if (!wind) continue;
         var intensity = speedToIntensity(wind.speed);
-        var length = lerp(IDLE_LEN, PEAK_LEN, intensity);
-        var width = lerp(IDLE_WIDTH, PEAK_WIDTH, intensity);
+        // Size ramps up only near the top of the range; colour stays linear.
+        var sizeT = Math.pow(intensity, SIZE_GAMMA);
+        var length = lerp(IDLE_LEN, PEAK_LEN, sizeT);
+        var width = lerp(IDLE_WIDTH, PEAK_WIDTH, sizeT);
         drawArrow(p.sx, p.sy, wind.angle, length, mixColor(intensity), width);
       }
 
