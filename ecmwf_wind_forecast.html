@@ -190,8 +190,8 @@
     var canvas = document.getElementById('arrows');
     var ctx = canvas.getContext('2d');
 
-    var IDLE_LEN = 6, PEAK_LEN = 20;           // calm -> strong arrow length
-    var IDLE_WIDTH = 1.1, PEAK_WIDTH = 2.2;
+    var IDLE_LEN = 2, PEAK_LEN = 22;           // calm -> strong arrow length
+    var IDLE_WIDTH = 0.8, PEAK_WIDTH = 2.4;
     var CALM_RGB = [200, 200, 200];            // light grey (calm)
     var STRONG_RGB = [40, 40, 40];             // near-black (strong)
     var SMAX = 55;                             // km/h mapped to the darkest/biggest
@@ -232,7 +232,7 @@
       var dx = Math.cos(angle), dy = Math.sin(angle);
       var tailX = x - dx * length / 2, tailY = y - dy * length / 2;
       var headX = x + dx * length / 2, headY = y + dy * length / 2;
-      var ah = Math.max(4, length * 0.32);
+      var ah = length * 0.4;   // arrow-head scales with length (tiny when calm)
       var spread = 0.42;
 
       ctx.strokeStyle = color;
@@ -408,6 +408,42 @@
         + '&timezone=Australia%2FSydney';
     }
 
+    function delay(ms) {
+      return new Promise(function (res) { setTimeout(res, ms); });
+    }
+
+    // Fetch one batch, retrying on rate-limit (429) with exponential backoff
+    // (honouring a Retry-After header when present).
+    function fetchBatch(url, attempt) {
+      attempt = attempt || 0;
+      return fetch(url).then(function (r) {
+        if (r.status === 429 && attempt < 5) {
+          var ra = parseInt(r.headers.get('Retry-After'), 10);
+          var wait = isFinite(ra) ? ra * 1000 : Math.pow(2, attempt) * 1000;
+          return delay(wait).then(function () { return fetchBatch(url, attempt + 1); });
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+    }
+
+    function applyBatch(data, offset, isFirst) {
+      // Multiple coordinates -> array; single -> object. Normalise.
+      var list = Array.isArray(data) ? data : [data];
+      if (isFirst) {
+        times = list[0].hourly.time;
+        frameCount = times.length;
+      }
+      for (var j = 0; j < list.length; j++) {
+        var h = list[j].hourly;
+        var p = points[offset + j];
+        p.speeds = h.wind_speed_10m;
+        p.dirs = h.wind_direction_10m;
+        p.precip = h.precipitation;
+      }
+      return list.length;
+    }
+
     function loadForecast() {
       statusEl.textContent = '';
       retryBtn.style.display = 'none';
@@ -418,48 +454,40 @@
         batches.push(points.slice(i, i + BATCH));
       }
 
-      Promise.all(batches.map(function (b) {
-        return fetch(buildUrl(b)).then(function (r) {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
+      // Fetch batches sequentially with a small gap so we don't trip
+      // Open-Meteo's burst rate limit.
+      var offset = 0;
+      var chain = Promise.resolve();
+      batches.forEach(function (b, bi) {
+        chain = chain.then(function () {
+          validTimeEl.textContent = 'Loading ECMWF forecast… (' + (bi + 1) + '/' + batches.length + ')';
+          return fetchBatch(buildUrl(b));
+        }).then(function (data) {
+          offset += applyBatch(data, offset, bi === 0);
+          if (bi < batches.length - 1) return delay(350);
         });
-      }))
-        .then(function (responses) {
-          var offset = 0;
-          for (var bi = 0; bi < responses.length; bi++) {
-            // Multiple coordinates -> array; single -> object. Normalise.
-            var list = Array.isArray(responses[bi]) ? responses[bi] : [responses[bi]];
-            if (bi === 0) {
-              times = list[0].hourly.time;
-              frameCount = times.length;
-            }
-            for (var j = 0; j < list.length; j++) {
-              var h = list[j].hourly;
-              var p = points[offset + j];
-              p.speeds = h.wind_speed_10m;
-              p.dirs = h.wind_direction_10m;
-              p.precip = h.precipitation;
-            }
-            offset += list.length;
-          }
-          if (offset !== points.length) {
-            throw new Error('Expected ' + points.length + ' locations, got ' + offset);
-          }
-          frame = 0;
-          subMax = (frameCount - 1) * SUBSTEPS;
-          slider.max = String(subMax);
-          slider.value = '0';
-          slider.disabled = false;
-          playBtn.disabled = false;
-          updateLabel();
-          setPlaying(true);   // auto-play on load
-        })
-        .catch(function (err) {
-          validTimeEl.textContent = 'Forecast unavailable';
-          statusEl.textContent = 'Could not load the ECMWF forecast ('
-            + err.message + '). Check your internet connection.';
-          retryBtn.style.display = 'inline-block';
-        });
+      });
+
+      chain.then(function () {
+        if (offset !== points.length) {
+          throw new Error('Expected ' + points.length + ' locations, got ' + offset);
+        }
+        frame = 0;
+        subMax = (frameCount - 1) * SUBSTEPS;
+        slider.max = String(subMax);
+        slider.value = '0';
+        slider.disabled = false;
+        playBtn.disabled = false;
+        updateLabel();
+        setPlaying(true);   // auto-play on load
+      }).catch(function (err) {
+        validTimeEl.textContent = 'Forecast unavailable';
+        var msg = /429/.test(err.message)
+          ? 'Open-Meteo rate limit reached (HTTP 429). Wait a minute and press Retry, or reduce the number of arrows.'
+          : 'Could not load the ECMWF forecast (' + err.message + '). Check your internet connection.';
+        statusEl.textContent = msg;
+        retryBtn.style.display = 'inline-block';
+      });
     }
 
     // ---- Controls ---------------------------------------------------------
