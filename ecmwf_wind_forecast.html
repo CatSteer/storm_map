@@ -156,7 +156,7 @@
   <script>
     // ---- Domain: SE Australia (Sydney / Canberra / Melbourne region) ------
     var BOUNDS = L.latLngBounds([[-39, 144], [-28, 154]]);
-    var GRID_STEP = 1.0;   // degrees between arrow grid points (~132 points)
+    var GRID_STEP = 0.78;  // degrees between arrow grid points (~195 points)
 
     // ---- Map: locked CartoDB Positron -------------------------------------
     var map = L.map('map', {
@@ -277,7 +277,7 @@
     var frame = 0;           // current sub-frame
     var playing = false;
     var lastStep = 0;
-    var STEP_MS = 150;        // wall-clock time per sub-frame
+    var STEP_MS = 75;         // wall-clock time per sub-frame
 
     var playBtn = document.getElementById('play-btn');
     var slider = document.getElementById('time-slider');
