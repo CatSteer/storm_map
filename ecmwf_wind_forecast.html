@@ -179,7 +179,7 @@
              placeholder="Open-Meteo API key (optional)" />
       <button id="api-key-save" type="button">Use key</button>
     </div>
-    <p class="apikey-hint">Stored only in this browser. A paid key unlocks more forecast days.</p>
+    <p class="apikey-hint">A key is built in (15-day forecast). Replace it here to override (saved in this browser).</p>
     <p class="credit">
       Wind: ECMWF IFS (open data) via
       <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>
@@ -435,8 +435,13 @@
     // dedicated customer endpoint and request more days. Without a key we stay
     // on the free endpoint at 2 days to keep the request under the rate limit.
     var FREE_DAYS = 2, KEY_DAYS = 15;   // ECMWF IFS open data runs out to 15 days
-    var API_KEY = '';
-    try { API_KEY = localStorage.getItem('openmeteo_apikey') || ''; } catch (e) {}
+    // Baked-in key so the tool works with no manual entry. NOTE: this value is
+    // committed to the repo and embedded in the file — if the repo/file is
+    // shared publicly, treat the key as exposed and rotate it from your
+    // Open-Meteo account. A key typed into the field (localStorage) overrides it.
+    var DEFAULT_API_KEY = 'ZdwB1dcASViMLo9s';
+    var API_KEY = DEFAULT_API_KEY;
+    try { var storedKey = localStorage.getItem('openmeteo_apikey'); if (storedKey) API_KEY = storedKey; } catch (e) {}
 
     function buildUrl(pts, hourlyVars) {
       // 2 decimals (~1 km) is finer than the 0.25 deg model grid.
