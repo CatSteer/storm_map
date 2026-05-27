@@ -434,7 +434,7 @@
     // With a paid Open-Meteo key the per-minute limit is lifted, so we use the
     // dedicated customer endpoint and request more days. Without a key we stay
     // on the free endpoint at 2 days to keep the request under the rate limit.
-    var FREE_DAYS = 2, KEY_DAYS = 7;
+    var FREE_DAYS = 2, KEY_DAYS = 15;   // ECMWF IFS open data runs out to 15 days
     var API_KEY = '';
     try { API_KEY = localStorage.getItem('openmeteo_apikey') || ''; } catch (e) {}
 
