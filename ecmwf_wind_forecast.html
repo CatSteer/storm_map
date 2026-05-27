@@ -424,7 +424,7 @@
         + '&hourly=' + hourlyVars
         + '&wind_speed_unit=kmh'
         + '&models=ecmwf_ifs025'
-        + '&forecast_days=3'
+        + '&forecast_days=2'   // 2 days keeps the request under Open-Meteo's rate limit
         + '&timezone=Australia%2FSydney';
     }
 
@@ -432,31 +432,37 @@
       return new Promise(function (res) { setTimeout(res, ms); });
     }
 
-    // Fetch one batch with retries (exponential backoff) on:
-    //  - rate limits (429) and server errors (5xx), honouring Retry-After;
-    //  - network failures ("Failed to fetch", aborted/timed-out requests).
-    // A per-attempt timeout aborts a hung request so it can be retried.
-    var MAX_RETRIES = 5;
-    function fetchBatch(url, attempt) {
+    function log(m) { if (window.console && console.log) console.log('[ecmwf] ' + m); }
+
+    // Fetch one batch with a few retries (exponential backoff) on rate limits
+    // (429), server errors (5xx) and network/timeout failures. Logs every
+    // attempt to the console and reports retries via onStatus, so a slow or
+    // failing load is visible rather than appearing to hang.
+    var MAX_RETRIES = 3;
+    var REQ_TIMEOUT = 12000;
+    function fetchBatch(url, attempt, onStatus) {
       attempt = attempt || 0;
       var ctrl = new AbortController();
-      var timer = setTimeout(function () { ctrl.abort(); }, 20000);
+      var timer = setTimeout(function () { ctrl.abort(); }, REQ_TIMEOUT);
+      log('GET attempt ' + (attempt + 1) + ': ' + url);
       return fetch(url, { signal: ctrl.signal }).then(function (r) {
         clearTimeout(timer);
         if ((r.status === 429 || r.status >= 500) && attempt < MAX_RETRIES) {
           var ra = parseInt(r.headers.get('Retry-After'), 10);
           var wait = isFinite(ra) ? ra * 1000 : Math.pow(2, attempt) * 800;
-          return delay(wait).then(function () { return fetchBatch(url, attempt + 1); });
+          log('HTTP ' + r.status + ' -> retry in ' + wait + 'ms');
+          if (onStatus) onStatus('HTTP ' + r.status + ' — retrying (' + (attempt + 1) + '/' + MAX_RETRIES + ')…');
+          return delay(wait).then(function () { return fetchBatch(url, attempt + 1, onStatus); });
         }
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       }, function (netErr) {
-        // fetch() rejected: network failure or aborted timeout -> retry.
         clearTimeout(timer);
+        log('network error: ' + (netErr && (netErr.name + ' ' + netErr.message)));
         if (attempt < MAX_RETRIES) {
-          return delay(Math.pow(2, attempt) * 800).then(function () {
-            return fetchBatch(url, attempt + 1);
-          });
+          var wait = Math.pow(2, attempt) * 800;
+          if (onStatus) onStatus('Network error — retrying (' + (attempt + 1) + '/' + MAX_RETRIES + ')…');
+          return delay(wait).then(function () { return fetchBatch(url, attempt + 1, onStatus); });
         }
         throw netErr;
       });
@@ -464,7 +470,8 @@
 
     // Fetch one variable set for every point, in sequential batches. Calls
     // assign(point, hourly) per location; resolves with the first time axis.
-    function fetchSeries(hourlyVars, assign, onProgress) {
+    // onStatus(text) receives progress and retry messages.
+    function fetchSeries(hourlyVars, assign, onStatus) {
       var batches = [];
       for (var i = 0; i < points.length; i += BATCH) {
         batches.push(points.slice(i, i + BATCH));
@@ -473,8 +480,8 @@
       var chain = Promise.resolve();
       batches.forEach(function (b, bi) {
         chain = chain.then(function () {
-          if (onProgress) onProgress(bi + 1, batches.length);
-          return fetchBatch(buildUrl(b, hourlyVars));
+          if (onStatus) onStatus('Loading… (' + (bi + 1) + '/' + batches.length + ')');
+          return fetchBatch(buildUrl(b, hourlyVars), 0, onStatus);
         }).then(function (data) {
           var list = Array.isArray(data) ? data : [data];
           if (bi === 0) firstTimes = list[0].hourly.time;
@@ -510,8 +517,8 @@
       fetchSeries('wind_speed_10m,wind_direction_10m', function (p, h) {
         p.speeds = h.wind_speed_10m;
         p.dirs = h.wind_direction_10m;
-      }, function (i, n) {
-        validTimeEl.textContent = 'Loading ECMWF forecast… (' + i + '/' + n + ')';
+      }, function (t) {
+        validTimeEl.textContent = t;
       }).then(function (t) {
         times = t;
         frameCount = times.length;
@@ -525,8 +532,13 @@
         updateLabel();
         setPlaying(true);   // auto-play on load
       }).catch(function (err) {
+        if (window.console) console.error('[ecmwf] load failed:', err);
         validTimeEl.textContent = 'Forecast unavailable';
-        statusEl.textContent = describeError(err) + ' Press Retry.';
+        var testUrl = buildUrl(points.slice(0, Math.min(BATCH, points.length)),
+                               'wind_speed_10m,wind_direction_10m');
+        statusEl.innerHTML = describeError(err) + ' Press Retry. '
+          + '<a href="' + testUrl + '" target="_blank" rel="noopener">Open the data URL directly</a> '
+          + '— if that page also fails it is your network/extension; if it works, the forecast loads on the next Retry.';
         retryBtn.style.display = 'inline-block';
       });
     }
@@ -538,10 +550,13 @@
       statusEl.textContent = '';
       fetchSeries('precipitation', function (p, h) {
         p.precip = h.precipitation;
+      }, function (t) {
+        statusEl.textContent = 'Rain: ' + t;
       }).then(function () {
         rainLoaded = true;
         showRain = true;
         rainBtn.disabled = false;
+        statusEl.textContent = '';
         updateRainBtn();
       }).catch(function (err) {
         rainBtn.disabled = false;
