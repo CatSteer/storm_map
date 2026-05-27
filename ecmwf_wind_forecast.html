@@ -92,6 +92,17 @@
     }
     #rain-btn.active { background: #2b6cb0; color: #fff; }
     #rain-btn:disabled { opacity: 0.5; cursor: default; }
+    .apikey { display: flex; gap: 6px; margin-top: 8px; }
+    .apikey input {
+      flex: 1; min-width: 0; font-size: 12px; padding: 5px 7px;
+      border: 1px solid #cbd5e0; border-radius: 6px;
+    }
+    #api-key-save {
+      appearance: none; font-size: 12px; font-weight: 600; padding: 5px 9px;
+      border: 1px solid #2b6cb0; background: #fff; color: #2b6cb0;
+      border-radius: 6px; cursor: pointer; white-space: nowrap;
+    }
+    .apikey-hint { margin: 4px 0 0; font-size: 11px; color: #718096; }
     #time-slider {
       flex: 1;
       cursor: pointer;
@@ -163,6 +174,12 @@
     </div>
     <p id="status"></p>
     <button id="retry-btn" type="button">Retry</button>
+    <div class="apikey">
+      <input id="api-key" type="password" autocomplete="off" spellcheck="false"
+             placeholder="Open-Meteo API key (optional)" />
+      <button id="api-key-save" type="button">Use key</button>
+    </div>
+    <p class="apikey-hint">Stored only in this browser. A paid key unlocks more forecast days.</p>
     <p class="credit">
       Wind: ECMWF IFS (open data) via
       <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>
@@ -414,17 +431,26 @@
     // server length limits, regardless of how many grid points there are.
     var BATCH = 150;          // locations per request
 
+    // With a paid Open-Meteo key the per-minute limit is lifted, so we use the
+    // dedicated customer endpoint and request more days. Without a key we stay
+    // on the free endpoint at 2 days to keep the request under the rate limit.
+    var FREE_DAYS = 2, KEY_DAYS = 7;
+    var API_KEY = '';
+    try { API_KEY = localStorage.getItem('openmeteo_apikey') || ''; } catch (e) {}
+
     function buildUrl(pts, hourlyVars) {
       // 2 decimals (~1 km) is finer than the 0.25 deg model grid.
       var lats = pts.map(function (p) { return p.lat.toFixed(2); }).join(',');
       var lons = pts.map(function (p) { return p.lon.toFixed(2); }).join(',');
-      return 'https://api.open-meteo.com/v1/forecast'
+      var host = API_KEY ? 'https://customer-api.open-meteo.com' : 'https://api.open-meteo.com';
+      return host + '/v1/forecast'
         + '?latitude=' + lats
         + '&longitude=' + lons
         + '&hourly=' + hourlyVars
         + '&wind_speed_unit=kmh'
         + '&models=ecmwf_ifs025'
-        + '&forecast_days=2'   // 2 days keeps the request under Open-Meteo's rate limit
+        + '&forecast_days=' + (API_KEY ? KEY_DAYS : FREE_DAYS)
+        + (API_KEY ? '&apikey=' + encodeURIComponent(API_KEY) : '')
         + '&timezone=Australia%2FSydney';
     }
 
@@ -588,6 +614,27 @@
       if (!rainLoaded) { loadRain(); return; }   // fetch precip on first use
       showRain = !showRain;                        // then just toggle display
       updateRainBtn();
+    });
+
+    // Open-Meteo API key: stored only in localStorage, never in the file.
+    var apiKeyInput = document.getElementById('api-key');
+    var apiKeySave = document.getElementById('api-key-save');
+    apiKeyInput.value = API_KEY;
+    function applyApiKey() {
+      API_KEY = apiKeyInput.value.trim();
+      try {
+        if (API_KEY) localStorage.setItem('openmeteo_apikey', API_KEY);
+        else localStorage.removeItem('openmeteo_apikey');
+      } catch (e) {}
+      showRain = false;
+      rainLoaded = false;
+      updateRainBtn();
+      setPlaying(false);
+      loadForecast();   // reload from the appropriate endpoint / horizon
+    }
+    apiKeySave.addEventListener('click', applyApiKey);
+    apiKeyInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') applyApiKey();
     });
 
     // ---- Render loop ------------------------------------------------------
