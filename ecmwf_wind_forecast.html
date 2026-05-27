@@ -156,7 +156,7 @@
   <script>
     // ---- Domain: SE Australia (Sydney / Canberra / Melbourne region) ------
     var BOUNDS = L.latLngBounds([[-39, 144], [-28, 154]]);
-    var GRID_STEP = 1.1;   // degrees between arrow grid points (~110 points)
+    var GRID_STEP = 1.0;   // degrees between arrow grid points (~132 points)
 
     // ---- Map: locked CartoDB Positron -------------------------------------
     var map = L.map('map', {
@@ -270,12 +270,14 @@
     }
 
     // ---- Forecast data / animation state ----------------------------------
-    var times = [];          // ISO local time strings, one per frame
-    var frameCount = 0;
-    var frame = 0;
+    var times = [];          // ISO local time strings, one per hourly sample
+    var frameCount = 0;      // number of hourly samples
+    var SUBSTEPS = 4;        // sub-frames per hour -> 15-minute increments
+    var subMax = 0;          // last sub-frame index = (frameCount-1)*SUBSTEPS
+    var frame = 0;           // current sub-frame
     var playing = false;
     var lastStep = 0;
-    var FRAME_MS = 500;       // ~2 forecast hours per second
+    var STEP_MS = 150;        // wall-clock time per sub-frame
 
     var playBtn = document.getElementById('play-btn');
     var slider = document.getElementById('time-slider');
@@ -283,17 +285,47 @@
     var statusEl = document.getElementById('status');
     var retryBtn = document.getElementById('retry-btn');
 
-    function fmtTime(iso) {
-      // iso like "2026-05-27T15:00"; render as "Wed 27 May, 15:00".
-      var d = new Date(iso);
-      if (isNaN(d)) return iso;
+    function fmtDate(d) {
+      if (isNaN(d)) return '';
       var opts = { weekday: 'short', day: 'numeric', month: 'short',
                    hour: '2-digit', minute: '2-digit', hour12: false };
       return d.toLocaleString('en-AU', opts);
     }
 
+    // Map a sub-frame to its (interpolated) wall-clock Date.
+    function subFrameDate(sub) {
+      var hf = sub / SUBSTEPS;
+      var i0 = Math.floor(hf);
+      var i1 = Math.min(i0 + 1, frameCount - 1);
+      var frac = hf - i0;
+      var t0 = new Date(times[i0]).getTime();
+      var t1 = new Date(times[i1]).getTime();
+      return new Date(t0 + (t1 - t0) * frac);
+    }
+
     function updateLabel() {
-      if (frameCount > 0) validTimeEl.textContent = fmtTime(times[frame]);
+      if (frameCount > 0) validTimeEl.textContent = fmtDate(subFrameDate(frame));
+    }
+
+    // Wind at a point for a sub-frame: interpolate as a screen-space vector so
+    // both speed and direction ease smoothly (handles direction wrap-around).
+    function sampleWind(p, sub) {
+      var hf = sub / SUBSTEPS;
+      var i0 = Math.floor(hf);
+      var i1 = Math.min(i0 + 1, frameCount - 1);
+      var frac = hf - i0;
+      var s0 = p.speeds[i0], d0 = p.dirs[i0];
+      var s1 = p.speeds[i1], d1 = p.dirs[i1];
+      if (s0 == null || d0 == null) {
+        if (s1 == null || d1 == null) return null;
+        s0 = s1; d0 = d1;
+      } else if (s1 == null || d1 == null) {
+        s1 = s0; d1 = d0;
+      }
+      var a0 = bearingToScreenAngle(d0), a1 = bearingToScreenAngle(d1);
+      var vx = lerp(s0 * Math.cos(a0), s1 * Math.cos(a1), frac);
+      var vy = lerp(s0 * Math.sin(a0), s1 * Math.sin(a1), frac);
+      return { speed: Math.sqrt(vx * vx + vy * vy), angle: Math.atan2(vy, vx) };
     }
 
     // ---- Fetch ECMWF wind from Open-Meteo (runs in the browser) -----------
@@ -334,7 +366,8 @@
             points[i].dirs = h.wind_direction_10m;
           }
           frame = 0;
-          slider.max = String(frameCount - 1);
+          subMax = (frameCount - 1) * SUBSTEPS;
+          slider.max = String(subMax);
           slider.value = '0';
           slider.disabled = false;
           playBtn.disabled = false;
@@ -364,32 +397,30 @@
 
     // ---- Render loop ------------------------------------------------------
     function render(now) {
-      // Advance the forecast frame while playing.
-      if (playing && frameCount > 0 && now - lastStep >= FRAME_MS) {
+      // Advance the forecast sub-frame while playing.
+      if (playing && frameCount > 0 && now - lastStep >= STEP_MS) {
         lastStep = now;
-        frame = (frame + 1) % frameCount;
+        frame = (frame + 1) % (subMax + 1);
         slider.value = String(frame);
         updateLabel();
       }
 
       ctx.clearRect(0, 0, W, H);
 
-      var haveData = frameCount > 0;
+      if (frameCount === 0) {
+        requestAnimationFrame(render);
+        return;   // nothing to draw until data arrives
+      }
+
       for (var i = 0; i < points.length; i++) {
         var p = points[i];
-        var intensity = 0, angle;
-        if (haveData && p.speeds) {
-          var speed = p.speeds[frame];
-          var dir = p.dirs[frame];
-          if (speed == null || dir == null) continue;
-          intensity = speedToIntensity(speed);
-          angle = bearingToScreenAngle(dir);
-        } else {
-          continue;   // nothing to draw until data arrives
-        }
+        if (!p.speeds) continue;
+        var wind = sampleWind(p, frame);
+        if (!wind) continue;
+        var intensity = speedToIntensity(wind.speed);
         var length = lerp(IDLE_LEN, PEAK_LEN, intensity);
         var width = lerp(IDLE_WIDTH, PEAK_WIDTH, intensity);
-        drawArrow(p.sx, p.sy, angle, length, mixColor(intensity), width);
+        drawArrow(p.sx, p.sy, wind.angle, length, mixColor(intensity), width);
       }
 
       requestAnimationFrame(render);
