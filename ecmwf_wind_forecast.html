@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ECMWF Wind Forecast — Australia</title>
+  <title>ECMWF Wind Forecast — Eastern Australia</title>
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -134,7 +134,7 @@
 
   <div id="panel">
     <h1>ECMWF wind forecast</h1>
-    <p class="sub">10&nbsp;m wind &amp; rain &middot; Australia</p>
+    <p class="sub">10&nbsp;m wind &amp; rain &middot; Eastern Australia</p>
     <p id="valid-time">Loading ECMWF forecast&hellip;</p>
     <div class="controls">
       <button id="play-btn" type="button" disabled>Play</button>
@@ -161,9 +161,9 @@
     crossorigin=""
   ></script>
   <script>
-    // ---- Domain: all of Australia (incl. Tasmania) ------------------------
-    var BOUNDS = L.latLngBounds([[-44, 112], [-10, 154]]);
-    var GRID_STEP = 1.43;  // degrees between arrow grid points (~720 points)
+    // ---- Domain: a bit W of Adelaide (136E) east to the coast (154E) ------
+    var BOUNDS = L.latLngBounds([[-44, 136], [-10, 154]]);
+    var GRID_STEP = 1.43;  // degrees between arrow grid points (~310 points)
 
     // ---- Map: locked CartoDB Positron -------------------------------------
     var map = L.map('map', {
