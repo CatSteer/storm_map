@@ -56,6 +56,11 @@
       flex: 1; min-width: 0; font-size: 12px; padding: 5px 7px;
       border: 1px solid #cbd5e0; border-radius: 6px;
     }
+    #span-days {
+      width: 48px; font-size: 12px; padding: 5px 6px;
+      border: 1px solid #cbd5e0; border-radius: 6px;
+    }
+    .pick-unit { font-size: 11px; color: #718096; align-self: center; }
     #load-btn {
       appearance: none; font-size: 13px; font-weight: 600; padding: 6px 12px;
       border: none; background: #2b6cb0; color: #fff;
@@ -177,10 +182,13 @@
 
     <div class="pick">
       <input id="hist-date" type="date" />
+      <input id="span-days" type="number" min="1" max="3650" value="7" title="days to load" />
+      <span class="pick-unit">days</span>
       <button id="load-btn" type="button">Load</button>
     </div>
 
-    <p id="valid-time">Pick a date, then Load (7-day span from that date).</p>
+    <p id="valid-time">Pick a date &amp; length, then Load. (&le;31 days: hourly &middot; longer: daily steps)</p>
+    <p id="span-note" class="apikey-hint" style="margin-top:0"></p>
     <div class="controls">
       <button id="play-btn" type="button" disabled>Play</button>
       <input id="time-slider" type="range" min="0" max="0" value="0" step="1" disabled />
@@ -264,8 +272,10 @@
     var RAIN_LOW = [165, 210, 235];
     var RAIN_MID = [20, 70, 160];
     var RAIN_HIGH = [70, 12, 110];
-    var PMAX = 8;                              // mm/h -> darkest purple
-    var PMIN = 0.05;                           // mm/h below which we draw nothing
+    var PMAX_HOURLY = 8;                       // mm/h  -> darkest purple (hourly mode)
+    var PMAX_DAILY = 50;                       // mm/day -> darkest purple (daily mode)
+    var curPMAX = PMAX_HOURLY;                  // active rain scale (set per load)
+    var PMIN = 0.05;                            // rate below which we draw nothing
 
     var W = 0, H = 0;
     var cellPx = 40;                           // screen px between grid points
@@ -359,8 +369,11 @@
     var STEP_MS = 37.5;       // wall-clock time per sub-frame at 1x
     var speedMult = 1;        // playback speed multiplier
     var showRain = false;
+    var dailyMode = false;    // true when a long span is loaded as daily steps
 
     var loadBtn = document.getElementById('load-btn');
+    var spanInput = document.getElementById('span-days');
+    var spanNote = document.getElementById('span-note');
     var histDateInput = document.getElementById('hist-date');
     var playBtn = document.getElementById('play-btn');
     var slider = document.getElementById('time-slider');
@@ -371,10 +384,11 @@
     var rainBtn = document.getElementById('rain-btn');
     var rainLegend = document.getElementById('rain-legend');
 
-    function fmtDate(d) {
+    function fmtDate(d, dateOnly) {
       if (isNaN(d)) return '';
-      var opts = { weekday: 'short', day: 'numeric', month: 'short',
-                   hour: '2-digit', minute: '2-digit', hour12: false };
+      var opts = dateOnly
+        ? { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }
+        : { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false };
       return d.toLocaleString('en-AU', opts);
     }
 
@@ -389,7 +403,7 @@
     }
 
     function updateLabel() {
-      if (frameCount > 0) validTimeEl.textContent = fmtDate(subFrameDate(frame));
+      if (frameCount > 0) validTimeEl.textContent = fmtDate(subFrameDate(frame), dailyMode);
     }
 
     function subIndices(sub) {
@@ -433,7 +447,7 @@
     }
 
     function drawRainBlob(x, y, precip) {
-      var t = clamp01(precip / PMAX);
+      var t = clamp01(precip / curPMAX);
       var c = rainColor(t);
       var alpha = Math.min(0.2 + 0.65 * t, 0.85);
       var r = cellPx * 1.1;
@@ -448,7 +462,9 @@
 
     // ---- Fetch ERA5 from Open-Meteo archive (runs in the browser) ---------
     var BATCH = 150;          // locations per request
-    var HIST_SPAN_DAYS = 7;   // length of ERA5 window loaded per date
+    // Spans up to HOURLY_MAX_DAYS load at hourly resolution; longer spans load
+    // as daily steps (one frame per day) so even thousands of days stay usable.
+    var HOURLY_MAX_DAYS = 31;
 
     // Baked-in key so the tool works with no manual entry. NOTE: committed to
     // the repo and embedded in the file — if shared publicly, treat the key as
@@ -461,14 +477,17 @@
       return API_KEY ? 'https://customer-archive-api.open-meteo.com'
                      : 'https://archive-api.open-meteo.com';
     }
-    function buildArchiveUrl(pts, hourlyVars, startDate, endDate) {
+    function buildArchiveUrl(pts, seriesParam, startDate, endDate) {
+      // seriesParam is the full query fragment, e.g.
+      //   'hourly=wind_speed_10m,wind_direction_10m,precipitation' or
+      //   'daily=wind_speed_10m_max,wind_direction_10m_dominant,precipitation_sum'
       // 2 decimals (~1 km) is finer than the 0.25 deg model grid.
       var lats = pts.map(function (p) { return p.lat.toFixed(2); }).join(',');
       var lons = pts.map(function (p) { return p.lon.toFixed(2); }).join(',');
       return archiveHost() + '/v1/archive'
         + '?latitude=' + lats
         + '&longitude=' + lons
-        + '&hourly=' + hourlyVars
+        + '&' + seriesParam
         + '&wind_speed_unit=kmh'
         + '&start_date=' + startDate
         + '&end_date=' + endDate
@@ -522,8 +541,10 @@
           return fetchBatch(makeUrl(b), 0, onStatus);
         }).then(function (data) {
           var list = Array.isArray(data) ? data : [data];
-          if (bi === 0) firstTimes = list[0].hourly.time;
-          for (var j = 0; j < list.length; j++) assign(points[offset + j], list[j].hourly);
+          if (bi === 0) firstTimes = (list[0].hourly || list[0].daily).time;
+          for (var j = 0; j < list.length; j++) {
+            assign(points[offset + j], list[j].hourly || list[j].daily);
+          }
           offset += list.length;
           if (bi < batches.length - 1) return delay(350);
         });
@@ -550,19 +571,33 @@
       return 'Could not load ERA5 (' + err.message + ').';
     }
 
-    // ---- Load ERA5 (wind + rain) for the chosen date ----------------------
+    // ---- Load ERA5 (wind + rain) for the chosen date & span ---------------
     function loadHistorical() {
       var start = histDateInput.value;
       if (!start) { validTimeEl.textContent = 'Pick a date first.'; return; }
 
+      // How many days to play over (chosen in the UI).
+      var days = parseInt(spanInput.value, 10);
+      if (!isFinite(days) || days < 1) days = 1;
+      if (days > 3650) days = 3650;
+      spanInput.value = String(days);
+
+      // Short spans animate hourly; long spans switch to one frame per day.
+      dailyMode = days > HOURLY_MAX_DAYS;
+      curPMAX = dailyMode ? PMAX_DAILY : PMAX_HOURLY;
+      var seriesParam = dailyMode
+        ? 'daily=wind_speed_10m_max,wind_direction_10m_dominant,precipitation_sum'
+        : 'hourly=wind_speed_10m,wind_direction_10m,precipitation';
+
       var startD = new Date(start + 'T00:00:00');
-      var endD = new Date(startD.getTime() + (HIST_SPAN_DAYS - 1) * 86400000);
+      var endD = new Date(startD.getTime() + (days - 1) * 86400000);
       var maxD = new Date(Date.now() - 5 * 86400000);   // ERA5 ~5-day lag
       if (endD > maxD) endD = maxD;
       if (endD < startD) endD = startD;
       var endStr = endD.toISOString().slice(0, 10);
 
       statusEl.textContent = '';
+      spanNote.textContent = '';
       retryBtn.style.display = 'none';
       loadBtn.disabled = true;
       playBtn.disabled = true;
@@ -571,13 +606,17 @@
       setPlaying(false);
       validTimeEl.textContent = 'Loading ERA5…';
 
-      fetchSeries(function (b) {
-          return buildArchiveUrl(b, 'wind_speed_10m,wind_direction_10m,precipitation', start, endStr);
-        },
-        function (p, h) {
-          p.speeds = h.wind_speed_10m;
-          p.dirs = h.wind_direction_10m;
-          p.precip = h.precipitation;
+      fetchSeries(function (b) { return buildArchiveUrl(b, seriesParam, start, endStr); },
+        function (p, blk) {
+          if (dailyMode) {
+            p.speeds = blk.wind_speed_10m_max;
+            p.dirs = blk.wind_direction_10m_dominant;
+            p.precip = blk.precipitation_sum;
+          } else {
+            p.speeds = blk.wind_speed_10m;
+            p.dirs = blk.wind_direction_10m;
+            p.precip = blk.precipitation;
+          }
         },
         function (t) { validTimeEl.textContent = 'ERA5: ' + t; })
       .then(function (t) {
@@ -591,6 +630,9 @@
         playBtn.disabled = false;
         rainBtn.disabled = false;
         loadBtn.disabled = false;
+        spanNote.textContent = frameCount + (dailyMode ? ' daily steps' : ' hourly steps')
+          + ' · ' + start + ' → ' + endStr
+          + (dailyMode ? ' · daily max wind / dominant dir / daily rain' : '');
         updateLabel();
         updateRainBtn();
         setPlaying(true);   // auto-play once loaded
@@ -599,7 +641,7 @@
         loadBtn.disabled = false;
         validTimeEl.textContent = 'ERA5 unavailable';
         var testUrl = buildArchiveUrl(points.slice(0, Math.min(BATCH, points.length)),
-                                      'wind_speed_10m,wind_direction_10m', start, endStr);
+                                      seriesParam, start, endStr);
         statusEl.innerHTML = describeError(err) + ' '
           + '<a href="' + testUrl + '" target="_blank" rel="noopener">Open the data URL directly</a> '
           + '— if that page also fails it is your network/extension or plan.';
@@ -705,6 +747,7 @@
       relayout();
       var maxD = new Date(Date.now() - 5 * 86400000);
       var defD = new Date(Date.now() - 35 * 86400000);
+      histDateInput.min = '1940-01-01';   // ERA5 archive start
       histDateInput.max = maxD.toISOString().slice(0, 10);
       histDateInput.value = defD.toISOString().slice(0, 10);
       requestAnimationFrame(render);
