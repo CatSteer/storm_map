@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ECMWF Wind Forecast — Eastern Australia</title>
+  <title>ECMWF Wind &amp; Rain — Eastern Australia (forecast + history)</title>
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -38,7 +38,7 @@
       border-radius: 10px;
       padding: 12px 14px;
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
-      width: 260px;
+      width: 268px;
     }
     #panel h1 {
       font-size: 15px;
@@ -51,7 +51,27 @@
       color: #777;
       margin: 0 0 10px 0;
     }
-    #valid-time {
+    .modes { display: flex; gap: 6px; margin: 0 0 10px 0; }
+    .modes button {
+      flex: 1;
+      appearance: none;
+      border: 1px solid #cbd5e0;
+      background: #fff;
+      color: #4a5568;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 8px;
+      border-radius: 7px;
+      cursor: pointer;
+    }
+    .modes button.active { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
+    .section { margin-bottom: 8px; }
+    .section.inactive { opacity: 0.45; }
+    .section-title {
+      font-size: 10px; font-weight: 700; color: #2b3a4a;
+      text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px 0;
+    }
+    #valid-time, #hist-time {
       font-size: 13px;
       font-weight: 600;
       color: #2b3a4a;
@@ -63,7 +83,7 @@
       align-items: center;
       gap: 8px;
     }
-    #play-btn {
+    #play-btn, #hist-play {
       appearance: none;
       border: none;
       background: #2b6cb0;
@@ -76,8 +96,8 @@
       transition: background 0.15s ease;
       white-space: nowrap;
     }
-    #play-btn:hover { background: #245a93; }
-    #play-btn:disabled { background: #9bb8d6; cursor: default; }
+    #play-btn:hover, #hist-play:hover { background: #245a93; }
+    #play-btn:disabled, #hist-play:disabled { background: #9bb8d6; cursor: default; }
     #rain-btn {
       appearance: none;
       border: 1px solid #2b6cb0;
@@ -92,7 +112,24 @@
     }
     #rain-btn.active { background: #2b6cb0; color: #fff; }
     #rain-btn:disabled { opacity: 0.5; cursor: default; }
-    .apikey { display: flex; gap: 6px; margin-top: 8px; }
+    .rain-row { margin: 8px 0 0 0; }
+    #time-slider, #hist-slider { flex: 1; min-width: 0; cursor: pointer; }
+    .hist-pick { display: flex; gap: 6px; margin-bottom: 6px; }
+    #hist-date {
+      flex: 1; min-width: 0; font-size: 12px; padding: 5px 7px;
+      border: 1px solid #cbd5e0; border-radius: 6px;
+    }
+    #hist-load {
+      appearance: none; font-size: 12px; font-weight: 600; padding: 5px 9px;
+      border: 1px solid #2b6cb0; background: #fff; color: #2b6cb0;
+      border-radius: 6px; cursor: pointer; white-space: nowrap;
+    }
+    #hist-load:disabled { opacity: 0.5; cursor: default; }
+    #hist-speed {
+      font-size: 12px; padding: 5px 6px; border: 1px solid #cbd5e0;
+      border-radius: 6px; background: #fff; cursor: pointer;
+    }
+    .apikey { display: flex; gap: 6px; margin-top: 10px; }
     .apikey input {
       flex: 1; min-width: 0; font-size: 12px; padding: 5px 7px;
       border: 1px solid #cbd5e0; border-radius: 6px;
@@ -103,10 +140,6 @@
       border-radius: 6px; cursor: pointer; white-space: nowrap;
     }
     .apikey-hint { margin: 4px 0 0; font-size: 11px; color: #718096; }
-    #time-slider {
-      flex: 1;
-      cursor: pointer;
-    }
     .legend {
       display: flex;
       align-items: center;
@@ -158,14 +191,47 @@
   <canvas id="arrows"></canvas>
 
   <div id="panel">
-    <h1>ECMWF wind forecast</h1>
+    <h1>ECMWF wind &amp; rain</h1>
     <p class="sub">10&nbsp;m wind &amp; rain &middot; Eastern Australia</p>
-    <p id="valid-time">Loading ECMWF forecast&hellip;</p>
-    <div class="controls">
-      <button id="play-btn" type="button" disabled>Play</button>
-      <input id="time-slider" type="range" min="0" max="0" value="0" step="1" disabled />
+
+    <div class="modes">
+      <button id="mode-fc" type="button" class="active">Forecast</button>
+      <button id="mode-hist" type="button">Historical</button>
+    </div>
+
+    <div id="fc-section" class="section">
+      <p class="section-title">Forecast (ECMWF IFS)</p>
+      <p id="valid-time">Loading ECMWF forecast&hellip;</p>
+      <div class="controls">
+        <button id="play-btn" type="button" disabled>Play</button>
+        <input id="time-slider" type="range" min="0" max="0" value="0" step="1" disabled />
+      </div>
+    </div>
+
+    <div id="hist-section" class="section inactive">
+      <p class="section-title">Historical (ERA5)</p>
+      <div class="hist-pick">
+        <input id="hist-date" type="date" />
+        <button id="hist-load" type="button">Load</button>
+      </div>
+      <p id="hist-time">Pick a date, then Load (7-day span from that date).</p>
+      <div class="controls">
+        <button id="hist-play" type="button" disabled>Play</button>
+        <input id="hist-slider" type="range" min="0" max="0" value="0" step="1" disabled />
+        <select id="hist-speed" title="Playback speed (historical)">
+          <option value="1" selected>1&times;</option>
+          <option value="2">2&times;</option>
+          <option value="3">3&times;</option>
+          <option value="5">5&times;</option>
+          <option value="10">10&times;</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="controls rain-row">
       <button id="rain-btn" type="button" disabled>Rain</button>
     </div>
+
     <div class="legend">
       <span>calm</span><span class="bar"></span><span>strong</span>
     </div>
@@ -176,12 +242,12 @@
     <button id="retry-btn" type="button">Retry</button>
     <div class="apikey">
       <input id="api-key" type="password" autocomplete="off" spellcheck="false"
-             placeholder="Open-Meteo API key (optional)" />
+             placeholder="Open-Meteo API key" />
       <button id="api-key-save" type="button">Use key</button>
     </div>
-    <p class="apikey-hint">A key is built in (15-day forecast). Replace it here to override (saved in this browser).</p>
+    <p class="apikey-hint">A key is built in. Replace it here to override (saved in this browser).</p>
     <p class="credit">
-      Wind: ECMWF IFS (open data) via
+      Wind &amp; rain: ECMWF IFS forecast &amp; ERA5 reanalysis via
       <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>
       &middot; Map &copy; CARTO / OpenStreetMap
     </p>
@@ -218,7 +284,7 @@
       maxZoom: 20
     }).addTo(map);
 
-    // ---- Arrow overlay (same style as the gust map) -----------------------
+    // ---- Arrow overlay ----------------------------------------------------
     var canvas = document.getElementById('arrows');
     var ctx = canvas.getContext('2d');
 
@@ -229,11 +295,10 @@
     var SMAX = 55;                             // km/h mapped to the darkest/biggest
     var SIZE_GAMMA = 3;                        // >1 keeps big arrows for the strongest winds only
 
-    // Rain heatmap: light blue -> dark blue -> dark purple. PMAX (mm/h) is the
-    // rate mapped to the darkest purple; rates below PMIN draw nothing.
-    var RAIN_LOW = [165, 210, 235];            // light blue (light rain)
-    var RAIN_MID = [20, 70, 160];              // dark blue
-    var RAIN_HIGH = [70, 12, 110];             // dark purple (heavy rain)
+    // Rain heatmap: light blue -> dark blue -> dark purple.
+    var RAIN_LOW = [165, 210, 235];
+    var RAIN_MID = [20, 70, 160];
+    var RAIN_HIGH = [70, 12, 110];
     var PMAX = 8;                              // mm/h -> darkest purple
     var PMIN = 0.05;                           // mm/h below which we draw nothing
 
@@ -250,22 +315,18 @@
       return 'rgb(' + r + ',' + g + ',' + b + ')';
     }
 
-    // Meteorological "from" bearing (deg, clockwise from north) -> screen angle.
-    // Wind blows TO (from + 180); north = up (-y), east = right (+x).
     function bearingToScreenAngle(fromDeg) {
       var toRad = (fromDeg + 180) * Math.PI / 180;
       return Math.atan2(-Math.cos(toRad), Math.sin(toRad));
     }
 
-    function speedToIntensity(speed) {
-      return clamp01(speed / SMAX);
-    }
+    function speedToIntensity(speed) { return clamp01(speed / SMAX); }
 
     function drawArrow(x, y, angle, length, color, width) {
       var dx = Math.cos(angle), dy = Math.sin(angle);
       var tailX = x - dx * length / 2, tailY = y - dy * length / 2;
       var headX = x + dx * length / 2, headY = y + dy * length / 2;
-      var ah = length * 0.4;   // arrow-head scales with length (tiny when calm)
+      var ah = length * 0.4;
       var spread = 0.42;
 
       ctx.strokeStyle = color;
@@ -284,7 +345,7 @@
     }
 
     // ---- Geo grid of arrow points -----------------------------------------
-    // Each point: { lat, lon, sx, sy (screen px), speeds[], dirs[] }.
+    // Each point holds two datasets: fc (forecast) and hist (ERA5).
     var points = [];
 
     function buildGridPoints() {
@@ -293,7 +354,11 @@
       var w = BOUNDS.getWest(), e = BOUNDS.getEast();
       for (var lat = s; lat <= n + 1e-9; lat += GRID_STEP) {
         for (var lon = w; lon <= e + 1e-9; lon += GRID_STEP) {
-          points.push({ lat: lat, lon: lon, sx: 0, sy: 0, speeds: null, dirs: null, precip: null });
+          points.push({
+            lat: lat, lon: lon, sx: 0, sy: 0,
+            fc:   { speeds: null, dirs: null, precip: null },
+            hist: { speeds: null, dirs: null, precip: null }
+          });
         }
       }
     }
@@ -316,7 +381,6 @@
         points[i].sx = pt.x;
         points[i].sy = pt.y;
       }
-      // Screen spacing between adjacent grid points (used to size rain blobs).
       if (points.length > 1) {
         var dx = points[1].sx - points[0].sx, dy = points[1].sy - points[0].sy;
         var d = Math.sqrt(dx * dx + dy * dy);
@@ -324,25 +388,40 @@
       }
     }
 
-    // ---- Forecast data / animation state ----------------------------------
-    var times = [];          // ISO local time strings, one per hourly sample
-    var frameCount = 0;      // number of hourly samples
+    // ---- Timelines / animation state --------------------------------------
     var SUBSTEPS = 4;        // sub-frames per hour -> 15-minute increments
-    var subMax = 0;          // last sub-frame index = (frameCount-1)*SUBSTEPS
-    var frame = 0;           // current sub-frame
-    var playing = false;
-    var lastStep = 0;
-    var STEP_MS = 37.5;       // wall-clock time per sub-frame
-    var showRain = false;     // rain heatmap visible?
-    var rainLoaded = false;   // precipitation fetched yet?
+    var STEP_MS = 37.5;      // wall-clock time per sub-frame (forecast speed)
+
+    function makeTimeline() {
+      return { times: [], frameCount: 0, subMax: 0, frame: 0, playing: false, lastStep: 0 };
+    }
+    var fcTL = makeTimeline();     // forecast
+    var histTL = makeTimeline();   // historical (ERA5)
+    var mode = 'forecast';         // which timeline drives the map
+    var histSpeed = 1;             // historical playback multiplier
+    var showRain = false;          // rain heatmap visible?
+    var fcRainLoaded = false;      // forecast precipitation fetched?
+
+    function activeTL() { return mode === 'historical' ? histTL : fcTL; }
+    function dataOf(p) { return mode === 'historical' ? p.hist : p.fc; }
 
     var playBtn = document.getElementById('play-btn');
-    var slider = document.getElementById('time-slider');
+    var timeSlider = document.getElementById('time-slider');
     var validTimeEl = document.getElementById('valid-time');
     var statusEl = document.getElementById('status');
     var retryBtn = document.getElementById('retry-btn');
     var rainBtn = document.getElementById('rain-btn');
     var rainLegend = document.getElementById('rain-legend');
+    var modeFcBtn = document.getElementById('mode-fc');
+    var modeHistBtn = document.getElementById('mode-hist');
+    var fcSection = document.getElementById('fc-section');
+    var histSection = document.getElementById('hist-section');
+    var histDateInput = document.getElementById('hist-date');
+    var histLoadBtn = document.getElementById('hist-load');
+    var histTimeEl = document.getElementById('hist-time');
+    var histPlayBtn = document.getElementById('hist-play');
+    var histSlider = document.getElementById('hist-slider');
+    var histSpeedSel = document.getElementById('hist-speed');
 
     function fmtDate(d) {
       if (isNaN(d)) return '';
@@ -351,33 +430,36 @@
       return d.toLocaleString('en-AU', opts);
     }
 
-    // Map a sub-frame to its (interpolated) wall-clock Date.
-    function subFrameDate(sub) {
+    // Sub-frame -> (interpolated) wall-clock Date, for a given timeline.
+    function tlDate(tl, sub) {
       var hf = sub / SUBSTEPS;
       var i0 = Math.floor(hf);
-      var i1 = Math.min(i0 + 1, frameCount - 1);
+      var i1 = Math.min(i0 + 1, tl.frameCount - 1);
       var frac = hf - i0;
-      var t0 = new Date(times[i0]).getTime();
-      var t1 = new Date(times[i1]).getTime();
+      var t0 = new Date(tl.times[i0]).getTime();
+      var t1 = new Date(tl.times[i1]).getTime();
       return new Date(t0 + (t1 - t0) * frac);
     }
 
-    function updateLabel() {
-      if (frameCount > 0) validTimeEl.textContent = fmtDate(subFrameDate(frame));
+    function updateFcLabel() {
+      if (fcTL.frameCount > 0) validTimeEl.textContent = fmtDate(tlDate(fcTL, fcTL.frame));
+    }
+    function updateHistLabel() {
+      if (histTL.frameCount > 0) histTimeEl.textContent = fmtDate(tlDate(histTL, histTL.frame));
     }
 
-    // The two hourly samples that bracket a sub-frame, plus the blend fraction.
-    function subIndices(sub) {
+    // The two hourly samples bracketing a sub-frame, plus the blend fraction.
+    function subIndices(tl, sub) {
       var hf = sub / SUBSTEPS;
       var i0 = Math.floor(hf);
-      return { i0: i0, i1: Math.min(i0 + 1, frameCount - 1), frac: hf - i0 };
+      return { i0: i0, i1: Math.min(i0 + 1, tl.frameCount - 1), frac: hf - i0 };
     }
 
-    // Wind at a point for a sub-frame: interpolate as a screen-space vector so
-    // both speed and direction ease smoothly (handles direction wrap-around).
-    function sampleWind(p, idx) {
-      var s0 = p.speeds[idx.i0], d0 = p.dirs[idx.i0];
-      var s1 = p.speeds[idx.i1], d1 = p.dirs[idx.i1];
+    // Wind at a point/sub-frame: interpolate as a screen-space vector so speed
+    // and direction ease smoothly (handles direction wrap-around).
+    function sampleWind(ds, idx) {
+      var s0 = ds.speeds[idx.i0], d0 = ds.dirs[idx.i0];
+      var s1 = ds.speeds[idx.i1], d1 = ds.dirs[idx.i1];
       if (s0 == null || d0 == null) {
         if (s1 == null || d1 == null) return null;
         s0 = s1; d0 = d1;
@@ -390,7 +472,6 @@
       return { speed: Math.sqrt(vx * vx + vy * vy), angle: Math.atan2(vy, vx) };
     }
 
-    // Interpolate a scalar (e.g. precipitation) between the bracketing samples.
     function sampleScalar(arr, idx) {
       var a = arr[idx.i0], b = arr[idx.i1];
       if (a == null) a = b;
@@ -399,7 +480,6 @@
       return lerp(a, b, idx.frac);
     }
 
-    // Rain rate (mm/h) -> heatmap colour: light blue -> dark blue -> dark purple.
     function rainColor(t) {
       var c0, c1, u;
       if (t < 0.5) { c0 = RAIN_LOW; c1 = RAIN_MID; u = t / 0.5; }
@@ -411,7 +491,6 @@
       ];
     }
 
-    // Soft, alpha-faded blob so neighbouring cells blend into a smooth field.
     function drawRainBlob(x, y, precip) {
       var t = clamp01(precip / PMAX);
       var c = rainColor(t);
@@ -426,15 +505,14 @@
       ctx.fill();
     }
 
-    // ---- Fetch ECMWF wind + rain from Open-Meteo (runs in the browser) ----
-    // Locations are fetched in batches so each request URL stays well within
-    // server length limits, regardless of how many grid points there are.
+    // ---- Fetch from Open-Meteo (runs in the browser) ----------------------
     var BATCH = 150;          // locations per request
 
     // With a paid Open-Meteo key the per-minute limit is lifted, so we use the
-    // dedicated customer endpoint and request more days. Without a key we stay
-    // on the free endpoint at 2 days to keep the request under the rate limit.
+    // dedicated customer endpoints and request more days. Without a key we stay
+    // on the free endpoints at 2 days to keep the request under the rate limit.
     var FREE_DAYS = 2, KEY_DAYS = 15;   // ECMWF IFS open data runs out to 15 days
+    var HIST_SPAN_DAYS = 7;             // length of ERA5 window loaded per date
     // Baked-in key so the tool works with no manual entry. NOTE: this value is
     // committed to the repo and embedded in the file — if the repo/file is
     // shared publicly, treat the key as exposed and rotate it from your
@@ -443,14 +521,22 @@
     var API_KEY = DEFAULT_API_KEY;
     try { var storedKey = localStorage.getItem('openmeteo_apikey'); if (storedKey) API_KEY = storedKey; } catch (e) {}
 
-    function buildUrl(pts, hourlyVars) {
+    function apiHost(prefix) {
+      return API_KEY ? ('https://customer-' + prefix + 'api.open-meteo.com')
+                     : ('https://' + prefix + 'api.open-meteo.com');
+    }
+    function coords(pts) {
       // 2 decimals (~1 km) is finer than the 0.25 deg model grid.
-      var lats = pts.map(function (p) { return p.lat.toFixed(2); }).join(',');
-      var lons = pts.map(function (p) { return p.lon.toFixed(2); }).join(',');
-      var host = API_KEY ? 'https://customer-api.open-meteo.com' : 'https://api.open-meteo.com';
-      return host + '/v1/forecast'
-        + '?latitude=' + lats
-        + '&longitude=' + lons
+      return {
+        lats: pts.map(function (p) { return p.lat.toFixed(2); }).join(','),
+        lons: pts.map(function (p) { return p.lon.toFixed(2); }).join(',')
+      };
+    }
+    function buildForecastUrl(pts, hourlyVars) {
+      var c = coords(pts);
+      return apiHost('') + '/v1/forecast'
+        + '?latitude=' + c.lats
+        + '&longitude=' + c.lons
         + '&hourly=' + hourlyVars
         + '&wind_speed_unit=kmh'
         + '&models=ecmwf_ifs025'
@@ -458,17 +544,25 @@
         + (API_KEY ? '&apikey=' + encodeURIComponent(API_KEY) : '')
         + '&timezone=Australia%2FSydney';
     }
-
-    function delay(ms) {
-      return new Promise(function (res) { setTimeout(res, ms); });
+    function buildArchiveUrl(pts, hourlyVars, startDate, endDate) {
+      // The archive endpoint serves ERA5 reanalysis (default model).
+      var c = coords(pts);
+      return apiHost('archive-') + '/v1/archive'
+        + '?latitude=' + c.lats
+        + '&longitude=' + c.lons
+        + '&hourly=' + hourlyVars
+        + '&wind_speed_unit=kmh'
+        + '&start_date=' + startDate
+        + '&end_date=' + endDate
+        + (API_KEY ? '&apikey=' + encodeURIComponent(API_KEY) : '')
+        + '&timezone=Australia%2FSydney';
     }
 
+    function delay(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
     function log(m) { if (window.console && console.log) console.log('[ecmwf] ' + m); }
 
     // Fetch one batch with a few retries (exponential backoff) on rate limits
-    // (429), server errors (5xx) and network/timeout failures. Logs every
-    // attempt to the console and reports retries via onStatus, so a slow or
-    // failing load is visible rather than appearing to hang.
+    // (429), server errors (5xx) and network/timeout failures.
     var MAX_RETRIES = 3;
     var REQ_TIMEOUT = 12000;
     function fetchBatch(url, attempt, onStatus) {
@@ -499,10 +593,10 @@
       });
     }
 
-    // Fetch one variable set for every point, in sequential batches. Calls
-    // assign(point, hourly) per location; resolves with the first time axis.
-    // onStatus(text) receives progress and retry messages.
-    function fetchSeries(hourlyVars, assign, onStatus) {
+    // Fetch a variable set for every point, in sequential batches. makeUrl(batch)
+    // builds each request URL; assign(point, hourly) stores the result. Resolves
+    // with the first batch's time axis.
+    function fetchSeries(makeUrl, assign, onStatus) {
       var batches = [];
       for (var i = 0; i < points.length; i += BATCH) {
         batches.push(points.slice(i, i + BATCH));
@@ -512,7 +606,7 @@
       batches.forEach(function (b, bi) {
         chain = chain.then(function () {
           if (onStatus) onStatus('Loading… (' + (bi + 1) + '/' + batches.length + ')');
-          return fetchBatch(buildUrl(b, hourlyVars), 0, onStatus);
+          return fetchBatch(makeUrl(b), 0, onStatus);
         }).then(function (data) {
           var list = Array.isArray(data) ? data : [data];
           if (bi === 0) firstTimes = list[0].hourly.time;
@@ -531,97 +625,184 @@
 
     function describeError(err) {
       if (/429/.test(err.message)) {
-        return 'Open-Meteo rate limit reached (HTTP 429). Wait a minute and try again, or reduce the number of arrows.';
+        return 'Open-Meteo rate limit reached (HTTP 429). Wait a minute and try again.';
       }
       if (/Failed to fetch|NetworkError|aborted|abort/i.test(err.message || err.name)) {
-        return 'Network error reaching api.open-meteo.com — it may be offline, blocked on your network, or blocked by a browser ad-blocker/privacy extension.';
+        return 'Network error reaching Open-Meteo — it may be offline, blocked on your network, or blocked by a browser ad-blocker/privacy extension.';
       }
-      return 'Could not load the ECMWF forecast (' + err.message + ').';
+      return 'Could not load the data (' + err.message + ').';
     }
 
-    // Wind only — rain is fetched lazily when the user clicks the Rain button.
+    // ---- Forecast (wind; rain lazily on demand) ---------------------------
     function loadForecast() {
       statusEl.textContent = '';
       retryBtn.style.display = 'none';
       validTimeEl.textContent = 'Loading ECMWF forecast…';
+      fcRainLoaded = false;
 
-      fetchSeries('wind_speed_10m,wind_direction_10m', function (p, h) {
-        p.speeds = h.wind_speed_10m;
-        p.dirs = h.wind_direction_10m;
-      }, function (t) {
-        validTimeEl.textContent = t;
-      }).then(function (t) {
-        times = t;
-        frameCount = times.length;
-        frame = 0;
-        subMax = (frameCount - 1) * SUBSTEPS;
-        slider.max = String(subMax);
-        slider.value = '0';
-        slider.disabled = false;
-        playBtn.disabled = false;
-        rainBtn.disabled = false;
-        updateLabel();
-        setPlaying(true);   // auto-play on load
+      fetchSeries(function (b) { return buildForecastUrl(b, 'wind_speed_10m,wind_direction_10m'); },
+        function (p, h) { p.fc.speeds = h.wind_speed_10m; p.fc.dirs = h.wind_direction_10m; },
+        function (t) { validTimeEl.textContent = t; })
+      .then(function (t) {
+        fcTL.times = t;
+        fcTL.frameCount = t.length;
+        fcTL.frame = 0;
+        fcTL.subMax = (t.length - 1) * SUBSTEPS;
+        timeSlider.max = String(fcTL.subMax);
+        timeSlider.value = '0';
+        updateFcLabel();
+        updateControlsEnabled();
+        updateRainBtn();
+        if (mode === 'forecast') setTLPlaying(fcTL, playBtn, true);  // auto-play
       }).catch(function (err) {
-        if (window.console) console.error('[ecmwf] load failed:', err);
+        if (window.console) console.error('[ecmwf] forecast load failed:', err);
         validTimeEl.textContent = 'Forecast unavailable';
-        var testUrl = buildUrl(points.slice(0, Math.min(BATCH, points.length)),
-                               'wind_speed_10m,wind_direction_10m');
+        var testUrl = buildForecastUrl(points.slice(0, Math.min(BATCH, points.length)),
+                                       'wind_speed_10m,wind_direction_10m');
         statusEl.innerHTML = describeError(err) + ' Press Retry. '
           + '<a href="' + testUrl + '" target="_blank" rel="noopener">Open the data URL directly</a> '
-          + '— if that page also fails it is your network/extension; if it works, the forecast loads on the next Retry.';
+          + '— if that page also fails it is your network/extension.';
         retryBtn.style.display = 'inline-block';
       });
     }
 
-    // Lazily fetch precipitation the first time Rain is enabled.
+    // Lazily fetch forecast precipitation the first time Rain is enabled.
     function loadRain() {
       rainBtn.disabled = true;
       rainBtn.textContent = 'Rain…';
       statusEl.textContent = '';
-      fetchSeries('precipitation', function (p, h) {
-        p.precip = h.precipitation;
-      }, function (t) {
-        statusEl.textContent = 'Rain: ' + t;
-      }).then(function () {
-        rainLoaded = true;
+      fetchSeries(function (b) { return buildForecastUrl(b, 'precipitation'); },
+        function (p, h) { p.fc.precip = h.precipitation; },
+        function (t) { statusEl.textContent = 'Rain: ' + t; })
+      .then(function () {
+        fcRainLoaded = true;
         showRain = true;
-        rainBtn.disabled = false;
         statusEl.textContent = '';
+        updateControlsEnabled();
         updateRainBtn();
       }).catch(function (err) {
-        rainBtn.disabled = false;
         showRain = false;
+        updateControlsEnabled();
         updateRainBtn();
         statusEl.textContent = 'Rain unavailable: ' + describeError(err);
       });
     }
 
-    // ---- Controls ---------------------------------------------------------
-    function setPlaying(on) {
-      playing = on && frameCount > 0;
-      playBtn.textContent = playing ? 'Pause' : 'Play';
-      lastStep = performance.now();
+    // ---- Historical (ERA5): wind + rain in one load -----------------------
+    function loadHistorical() {
+      var start = histDateInput.value;
+      if (!start) { histTimeEl.textContent = 'Pick a date first.'; return; }
+
+      // Load HIST_SPAN_DAYS from the chosen date, clamped to ERA5 availability.
+      var startD = new Date(start + 'T00:00:00');
+      var endD = new Date(startD.getTime() + (HIST_SPAN_DAYS - 1) * 86400000);
+      var maxD = new Date(Date.now() - 5 * 86400000);   // ERA5 ~5-day lag
+      if (endD > maxD) endD = maxD;
+      if (endD < startD) endD = startD;
+      var endStr = endD.toISOString().slice(0, 10);
+
+      histLoadBtn.disabled = true;
+      histPlayBtn.disabled = true;
+      histSlider.disabled = true;
+      setTLPlaying(histTL, histPlayBtn, false);
+      histTimeEl.textContent = 'Loading ERA5…';
+
+      fetchSeries(function (b) {
+          return buildArchiveUrl(b, 'wind_speed_10m,wind_direction_10m,precipitation', start, endStr);
+        },
+        function (p, h) {
+          p.hist.speeds = h.wind_speed_10m;
+          p.hist.dirs = h.wind_direction_10m;
+          p.hist.precip = h.precipitation;
+        },
+        function (t) { histTimeEl.textContent = 'ERA5: ' + t; })
+      .then(function (t) {
+        histTL.times = t;
+        histTL.frameCount = t.length;
+        histTL.frame = 0;
+        histTL.subMax = (t.length - 1) * SUBSTEPS;
+        histSlider.max = String(histTL.subMax);
+        histSlider.value = '0';
+        histLoadBtn.disabled = false;
+        setMode('historical');          // show what we just loaded
+        updateHistLabel();
+        setTLPlaying(histTL, histPlayBtn, true);   // auto-play
+      }).catch(function (err) {
+        if (window.console) console.error('[ecmwf] historical load failed:', err);
+        histLoadBtn.disabled = false;
+        histTimeEl.textContent = 'ERA5 unavailable: ' + describeError(err);
+      });
     }
-    playBtn.addEventListener('click', function () { setPlaying(!playing); });
-    retryBtn.addEventListener('click', loadForecast);
-    slider.addEventListener('input', function () {
-      frame = parseInt(slider.value, 10) || 0;
-      updateLabel();
-    });
+
+    // ---- Controls ---------------------------------------------------------
+    function setTLPlaying(tl, btn, on) {
+      tl.playing = on && tl.frameCount > 0;
+      tl.lastStep = performance.now();
+      btn.textContent = tl.playing ? 'Pause' : 'Play';
+    }
+
+    function updateControlsEnabled() {
+      var f = (mode === 'forecast');
+      playBtn.disabled = !f || fcTL.frameCount === 0;
+      timeSlider.disabled = !f || fcTL.frameCount === 0;
+      histPlayBtn.disabled = f || histTL.frameCount === 0;
+      histSlider.disabled = f || histTL.frameCount === 0;
+      rainBtn.disabled = activeTL().frameCount === 0;
+    }
 
     function updateRainBtn() {
-      rainBtn.textContent = rainLoaded ? (showRain ? 'Rain: on' : 'Rain: off') : 'Rain';
+      var loaded = (mode === 'forecast') ? fcRainLoaded : (histTL.frameCount > 0);
+      rainBtn.textContent = loaded ? (showRain ? 'Rain: on' : 'Rain: off') : 'Rain';
       rainBtn.classList.toggle('active', showRain);
       rainLegend.style.display = showRain ? 'flex' : 'none';
     }
+
+    function setMode(m) {
+      mode = m;
+      setTLPlaying(fcTL, playBtn, false);
+      setTLPlaying(histTL, histPlayBtn, false);
+      modeFcBtn.classList.toggle('active', m === 'forecast');
+      modeHistBtn.classList.toggle('active', m === 'historical');
+      fcSection.classList.toggle('inactive', m !== 'forecast');
+      histSection.classList.toggle('inactive', m !== 'historical');
+      updateControlsEnabled();
+      updateRainBtn();
+    }
+
+    modeFcBtn.addEventListener('click', function () { setMode('forecast'); });
+    modeHistBtn.addEventListener('click', function () {
+      if (histTL.frameCount === 0) histTimeEl.textContent = 'Pick a date and Load first.';
+      setMode('historical');
+    });
+
+    playBtn.addEventListener('click', function () { setTLPlaying(fcTL, playBtn, !fcTL.playing); });
+    histPlayBtn.addEventListener('click', function () { setTLPlaying(histTL, histPlayBtn, !histTL.playing); });
+    histLoadBtn.addEventListener('click', loadHistorical);
+    retryBtn.addEventListener('click', loadForecast);
+
+    timeSlider.addEventListener('input', function () {
+      fcTL.frame = parseInt(timeSlider.value, 10) || 0;
+      updateFcLabel();
+    });
+    histSlider.addEventListener('input', function () {
+      histTL.frame = parseInt(histSlider.value, 10) || 0;
+      updateHistLabel();
+    });
+    histSpeedSel.addEventListener('change', function () {
+      histSpeed = parseInt(histSpeedSel.value, 10) || 1;
+    });
+
     rainBtn.addEventListener('click', function () {
-      if (!rainLoaded) { loadRain(); return; }   // fetch precip on first use
-      showRain = !showRain;                        // then just toggle display
+      if (mode === 'forecast') {
+        if (!fcRainLoaded) { loadRain(); return; }   // fetch precip on first use
+      } else if (histTL.frameCount === 0) {
+        return;                                        // no historical data yet
+      }
+      showRain = !showRain;
       updateRainBtn();
     });
 
-    // Open-Meteo API key: stored only in localStorage, never in the file.
+    // Open-Meteo API key: stored in localStorage; overrides the baked-in key.
     var apiKeyInput = document.getElementById('api-key');
     var apiKeySave = document.getElementById('api-key-save');
     apiKeyInput.value = API_KEY;
@@ -632,52 +813,52 @@
         else localStorage.removeItem('openmeteo_apikey');
       } catch (e) {}
       showRain = false;
-      rainLoaded = false;
+      fcRainLoaded = false;
       updateRainBtn();
-      setPlaying(false);
+      setMode('forecast');
       loadForecast();   // reload from the appropriate endpoint / horizon
     }
     apiKeySave.addEventListener('click', applyApiKey);
-    apiKeyInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') applyApiKey();
-    });
+    apiKeyInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') applyApiKey(); });
 
     // ---- Render loop ------------------------------------------------------
     function render(now) {
-      // Advance the forecast sub-frame while playing.
-      if (playing && frameCount > 0 && now - lastStep >= STEP_MS) {
-        lastStep = now;
-        frame = (frame + 1) % (subMax + 1);
-        slider.value = String(frame);
-        updateLabel();
+      var tl = activeTL();
+
+      if (tl.playing && tl.frameCount > 0) {
+        var interval = (mode === 'historical') ? (STEP_MS / histSpeed) : STEP_MS;
+        var elapsed = now - tl.lastStep;
+        if (elapsed >= interval) {
+          var steps = Math.floor(elapsed / interval);
+          tl.lastStep += steps * interval;
+          tl.frame = (tl.frame + steps) % (tl.subMax + 1);
+          if (mode === 'historical') { histSlider.value = String(tl.frame); updateHistLabel(); }
+          else { timeSlider.value = String(tl.frame); updateFcLabel(); }
+        }
       }
 
       ctx.clearRect(0, 0, W, H);
 
-      if (frameCount === 0) {
-        requestAnimationFrame(render);
-        return;   // nothing to draw until data arrives
-      }
+      if (tl.frameCount === 0) { requestAnimationFrame(render); return; }
 
-      var idx = subIndices(frame);
-      var i, p;
+      var idx = subIndices(tl, tl.frame);
+      var i, p, ds;
 
-      // Rain heatmap underneath (light blue -> dark blue -> dark purple).
+      // Rain heatmap underneath.
       for (i = 0; showRain && i < points.length; i++) {
-        p = points[i];
-        if (!p.precip) continue;
-        var precip = sampleScalar(p.precip, idx);
+        p = points[i]; ds = (mode === 'historical') ? p.hist : p.fc;
+        if (!ds.precip) continue;
+        var precip = sampleScalar(ds.precip, idx);
         if (precip > PMIN) drawRainBlob(p.sx, p.sy, precip);
       }
 
       // Wind arrows on top.
       for (i = 0; i < points.length; i++) {
-        p = points[i];
-        if (!p.speeds) continue;
-        var wind = sampleWind(p, idx);
+        p = points[i]; ds = (mode === 'historical') ? p.hist : p.fc;
+        if (!ds.speeds) continue;
+        var wind = sampleWind(ds, idx);
         if (!wind) continue;
         var intensity = speedToIntensity(wind.speed);
-        // Size ramps up only near the top of the range; colour stays linear.
         var sizeT = Math.pow(intensity, SIZE_GAMMA);
         var length = lerp(IDLE_LEN, PEAK_LEN, sizeT);
         var width = lerp(IDLE_WIDTH, PEAK_WIDTH, sizeT);
@@ -696,6 +877,12 @@
     map.whenReady(function () {
       buildGridPoints();
       relayout();
+      // Historical date picker: default ~35 days ago, max = ERA5 cutoff (~5d).
+      var maxD = new Date(Date.now() - 5 * 86400000);
+      var defD = new Date(Date.now() - 35 * 86400000);
+      histDateInput.max = maxD.toISOString().slice(0, 10);
+      histDateInput.value = defD.toISOString().slice(0, 10);
+      updateControlsEnabled();
       requestAnimationFrame(render);
       loadForecast();
     });
