@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ECMWF ERA5 Historical — Eastern Australia</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    #map {
+      position: absolute;
+      inset: 0;
+      background: #f6f6f4;
+    }
+    #arrows {
+      position: absolute;
+      inset: 0;
+      z-index: 500;
+      pointer-events: none;
+    }
+    #panel {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      border-radius: 10px;
+      padding: 12px 14px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+      width: 268px;
+    }
+    #panel h1 {
+      font-size: 15px;
+      margin: 0 0 2px 0;
+      font-weight: 600;
+      color: #222;
+    }
+    #panel .sub {
+      font-size: 11px;
+      color: #777;
+      margin: 0 0 10px 0;
+    }
+    .pick { display: flex; gap: 6px; margin-bottom: 8px; }
+    #hist-date {
+      flex: 1; min-width: 0; font-size: 12px; padding: 5px 7px;
+      border: 1px solid #cbd5e0; border-radius: 6px;
+    }
+    #span-days {
+      width: 48px; font-size: 12px; padding: 5px 6px;
+      border: 1px solid #cbd5e0; border-radius: 6px;
+    }
+    .pick-unit { font-size: 11px; color: #718096; align-self: center; }
+    #load-btn {
+      appearance: none; font-size: 13px; font-weight: 600; padding: 6px 12px;
+      border: none; background: #2b6cb0; color: #fff;
+      border-radius: 8px; cursor: pointer; white-space: nowrap;
+    }
+    #load-btn:hover { background: #245a93; }
+    #load-btn:disabled { background: #9bb8d6; cursor: default; }
+    #valid-time {
+      font-size: 13px;
+      font-weight: 600;
+      color: #2b3a4a;
+      margin: 0 0 8px 0;
+      min-height: 16px;
+    }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #play-btn {
+      appearance: none;
+      border: none;
+      background: #2b6cb0;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 7px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      white-space: nowrap;
+    }
+    #play-btn:hover { background: #245a93; }
+    #play-btn:disabled { background: #9bb8d6; cursor: default; }
+    #rain-btn {
+      appearance: none;
+      border: 1px solid #2b6cb0;
+      background: #fff;
+      color: #2b6cb0;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #rain-btn.active { background: #2b6cb0; color: #fff; }
+    #rain-btn:disabled { opacity: 0.5; cursor: default; }
+    .rain-row { margin-top: 8px; }
+    #time-slider { flex: 1; min-width: 0; cursor: pointer; }
+    #speed {
+      font-size: 12px; padding: 5px 6px; border: 1px solid #cbd5e0;
+      border-radius: 6px; background: #fff; cursor: pointer;
+    }
+    .apikey { display: flex; gap: 6px; margin-top: 10px; }
+    .apikey input {
+      flex: 1; min-width: 0; font-size: 12px; padding: 5px 7px;
+      border: 1px solid #cbd5e0; border-radius: 6px;
+    }
+    #api-key-save {
+      appearance: none; font-size: 12px; font-weight: 600; padding: 5px 9px;
+      border: 1px solid #2b6cb0; background: #fff; color: #2b6cb0;
+      border-radius: 6px; cursor: pointer; white-space: nowrap;
+    }
+    .apikey-hint { margin: 4px 0 0; font-size: 11px; color: #718096; }
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      color: #777;
+      margin-top: 10px;
+    }
+    .legend .bar {
+      flex: 1;
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(to right, rgb(200,200,200), rgb(40,40,40));
+    }
+    .legend .bar-rain {
+      background: linear-gradient(to right,
+        rgb(165,210,235), rgb(20,70,160), rgb(70,12,110));
+    }
+    .credit {
+      font-size: 10px;
+      color: #999;
+      margin-top: 10px;
+      line-height: 1.4;
+    }
+    .credit a { color: #999; }
+    #status {
+      font-size: 12px;
+      color: #b04a2b;
+      margin: 6px 0 0 0;
+      line-height: 1.4;
+    }
+    #retry-btn {
+      appearance: none;
+      border: 1px solid #b04a2b;
+      background: #fff;
+      color: #b04a2b;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 7px;
+      cursor: pointer;
+      margin-top: 6px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <canvas id="arrows"></canvas>
+
+  <div id="panel">
+    <h1>ERA5 historical</h1>
+    <p class="sub">10&nbsp;m wind &amp; rain &middot; Eastern Australia</p>
+
+    <div class="pick">
+      <input id="hist-date" type="date" />
+      <input id="span-days" type="number" min="1" max="3650" value="7" title="days to load" />
+      <span class="pick-unit">days</span>
+      <button id="load-btn" type="button">Load</button>
+    </div>
+
+    <p id="valid-time">Pick a date &amp; length, then Load. (&le;31 days: hourly &middot; longer: daily steps)</p>
+    <p id="span-note" class="apikey-hint" style="margin-top:0"></p>
+    <div class="controls">
+      <button id="play-btn" type="button" disabled>Play</button>
+      <input id="time-slider" type="range" min="0" max="0" value="0" step="1" disabled />
+      <select id="speed" title="Playback speed">
+        <option value="0.5">0.5&times;</option>
+        <option value="1" selected>1&times;</option>
+        <option value="2">2&times;</option>
+        <option value="3">3&times;</option>
+        <option value="5">5&times;</option>
+        <option value="10">10&times;</option>
+      </select>
+    </div>
+
+    <div class="controls rain-row">
+      <button id="rain-btn" type="button" disabled>Rain</button>
+    </div>
+
+    <div class="legend">
+      <span>calm</span><span class="bar"></span><span>strong</span>
+    </div>
+    <div class="legend" id="rain-legend" style="display:none">
+      <span>rain</span><span class="bar bar-rain"></span><span>heavy</span>
+    </div>
+    <p id="status"></p>
+    <button id="retry-btn" type="button">Retry</button>
+    <div class="apikey">
+      <input id="api-key" type="password" autocomplete="off" spellcheck="false"
+             placeholder="Open-Meteo API key" />
+      <button id="api-key-save" type="button">Use key</button>
+    </div>
+    <p class="apikey-hint">A key is built in. Replace it here to override (saved in this browser).</p>
+    <p class="credit">
+      ERA5 reanalysis via
+      <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>
+      &middot; Map &copy; CARTO / OpenStreetMap
+    </p>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script>
+    // ---- Domain: a bit W of Adelaide (136E) east to the coast (154E) ------
+    var BOUNDS = L.latLngBounds([[-44, 136], [-10, 154]]);
+    var GRID_STEP = 1.43;  // degrees between arrow grid points (~310 points)
+
+    // ---- Map: locked CartoDB Positron -------------------------------------
+    var map = L.map('map', {
+      dragging: false,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      touchZoom: false,
+      boxZoom: false,
+      keyboard: false,
+      zoomControl: false,
+      attributionControl: true
+    });
+    map.fitBounds(BOUNDS, { padding: [20, 20] });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> ' +
+        'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 20
+    }).addTo(map);
+
+    // ---- Arrow overlay ----------------------------------------------------
+    var canvas = document.getElementById('arrows');
+    var ctx = canvas.getContext('2d');
+
+    var IDLE_LEN = 2, PEAK_LEN = 22;           // calm -> strong arrow length
+    var IDLE_WIDTH = 0.8, PEAK_WIDTH = 2.4;
+    var CALM_RGB = [200, 200, 200];            // light grey (calm)
+    var STRONG_RGB = [40, 40, 40];             // near-black (strong)
+    var SMAX = 55;                             // km/h mapped to the darkest/biggest
+    var SIZE_GAMMA = 3;                        // >1 keeps big arrows for the strongest winds only
+
+    // Rain heatmap: light blue -> dark blue -> dark purple.
+    var RAIN_LOW = [165, 210, 235];
+    var RAIN_MID = [20, 70, 160];
+    var RAIN_HIGH = [70, 12, 110];
+    var PMAX_HOURLY = 8;                       // mm/h  -> darkest purple (hourly mode)
+    var PMAX_DAILY = 50;                       // mm/day -> darkest purple (daily mode)
+    var curPMAX = PMAX_HOURLY;                  // active rain scale (set per load)
+    var PMIN = 0.05;                            // rate below which we draw nothing
+
+    var W = 0, H = 0;
+    var cellPx = 40;                           // screen px between grid points
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function clamp01(t) { return t < 0 ? 0 : (t > 1 ? 1 : t); }
+
+    function mixColor(t) {
+      var r = Math.round(lerp(CALM_RGB[0], STRONG_RGB[0], t));
+      var g = Math.round(lerp(CALM_RGB[1], STRONG_RGB[1], t));
+      var b = Math.round(lerp(CALM_RGB[2], STRONG_RGB[2], t));
+      return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
+
+    function bearingToScreenAngle(fromDeg) {
+      var toRad = (fromDeg + 180) * Math.PI / 180;
+      return Math.atan2(-Math.cos(toRad), Math.sin(toRad));
+    }
+
+    function speedToIntensity(speed) { return clamp01(speed / SMAX); }
+
+    function drawArrow(x, y, angle, length, color, width) {
+      var dx = Math.cos(angle), dy = Math.sin(angle);
+      var tailX = x - dx * length / 2, tailY = y - dy * length / 2;
+      var headX = x + dx * length / 2, headY = y + dy * length / 2;
+      var ah = length * 0.4;
+      var spread = 0.42;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(headX, headY);
+      ctx.moveTo(headX, headY);
+      ctx.lineTo(headX - ah * Math.cos(angle - spread), headY - ah * Math.sin(angle - spread));
+      ctx.moveTo(headX, headY);
+      ctx.lineTo(headX - ah * Math.cos(angle + spread), headY - ah * Math.sin(angle + spread));
+      ctx.stroke();
+    }
+
+    // ---- Geo grid of arrow points -----------------------------------------
+    var points = [];
+
+    function buildGridPoints() {
+      points = [];
+      var s = BOUNDS.getSouth(), n = BOUNDS.getNorth();
+      var w = BOUNDS.getWest(), e = BOUNDS.getEast();
+      for (var lat = s; lat <= n + 1e-9; lat += GRID_STEP) {
+        for (var lon = w; lon <= e + 1e-9; lon += GRID_STEP) {
+          points.push({ lat: lat, lon: lon, sx: 0, sy: 0, speeds: null, dirs: null, precip: null });
+        }
+      }
+    }
+
+    function resizeCanvas() {
+      var rect = map.getContainer().getBoundingClientRect();
+      W = rect.width;
+      H = rect.height;
+      var dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function projectPoints() {
+      for (var i = 0; i < points.length; i++) {
+        var pt = map.latLngToContainerPoint([points[i].lat, points[i].lon]);
+        points[i].sx = pt.x;
+        points[i].sy = pt.y;
+      }
+      if (points.length > 1) {
+        var dx = points[1].sx - points[0].sx, dy = points[1].sy - points[0].sy;
+        var d = Math.sqrt(dx * dx + dy * dy);
+        if (d > 1) cellPx = d;
+      }
+    }
+
+    // ---- Animation state --------------------------------------------------
+    var times = [];          // ISO local time strings, one per hourly sample
+    var frameCount = 0;
+    var SUBSTEPS = 4;        // sub-frames per hour -> 15-minute increments
+    var subMax = 0;
+    var frame = 0;
+    var playing = false;
+    var lastStep = 0;
+    var STEP_MS = 37.5;       // wall-clock time per sub-frame at 1x
+    var speedMult = 1;        // playback speed multiplier
+    var showRain = false;
+    var dailyMode = false;    // true when a long span is loaded as daily steps
+
+    var loadBtn = document.getElementById('load-btn');
+    var spanInput = document.getElementById('span-days');
+    var spanNote = document.getElementById('span-note');
+    var histDateInput = document.getElementById('hist-date');
+    var playBtn = document.getElementById('play-btn');
+    var slider = document.getElementById('time-slider');
+    var speedSel = document.getElementById('speed');
+    var validTimeEl = document.getElementById('valid-time');
+    var statusEl = document.getElementById('status');
+    var retryBtn = document.getElementById('retry-btn');
+    var rainBtn = document.getElementById('rain-btn');
+    var rainLegend = document.getElementById('rain-legend');
+
+    function fmtDate(d, dateOnly) {
+      if (isNaN(d)) return '';
+      var opts = dateOnly
+        ? { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }
+        : { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false };
+      return d.toLocaleString('en-AU', opts);
+    }
+
+    function subFrameDate(sub) {
+      var hf = sub / SUBSTEPS;
+      var i0 = Math.floor(hf);
+      var i1 = Math.min(i0 + 1, frameCount - 1);
+      var frac = hf - i0;
+      var t0 = new Date(times[i0]).getTime();
+      var t1 = new Date(times[i1]).getTime();
+      return new Date(t0 + (t1 - t0) * frac);
+    }
+
+    function updateLabel() {
+      if (frameCount > 0) validTimeEl.textContent = fmtDate(subFrameDate(frame), dailyMode);
+    }
+
+    function subIndices(sub) {
+      var hf = sub / SUBSTEPS;
+      var i0 = Math.floor(hf);
+      return { i0: i0, i1: Math.min(i0 + 1, frameCount - 1), frac: hf - i0 };
+    }
+
+    function sampleWind(p, idx) {
+      var s0 = p.speeds[idx.i0], d0 = p.dirs[idx.i0];
+      var s1 = p.speeds[idx.i1], d1 = p.dirs[idx.i1];
+      if (s0 == null || d0 == null) {
+        if (s1 == null || d1 == null) return null;
+        s0 = s1; d0 = d1;
+      } else if (s1 == null || d1 == null) {
+        s1 = s0; d1 = d0;
+      }
+      var a0 = bearingToScreenAngle(d0), a1 = bearingToScreenAngle(d1);
+      var vx = lerp(s0 * Math.cos(a0), s1 * Math.cos(a1), idx.frac);
+      var vy = lerp(s0 * Math.sin(a0), s1 * Math.sin(a1), idx.frac);
+      return { speed: Math.sqrt(vx * vx + vy * vy), angle: Math.atan2(vy, vx) };
+    }
+
+    function sampleScalar(arr, idx) {
+      var a = arr[idx.i0], b = arr[idx.i1];
+      if (a == null) a = b;
+      if (b == null) b = a;
+      if (a == null) return 0;
+      return lerp(a, b, idx.frac);
+    }
+
+    function rainColor(t) {
+      var c0, c1, u;
+      if (t < 0.5) { c0 = RAIN_LOW; c1 = RAIN_MID; u = t / 0.5; }
+      else { c0 = RAIN_MID; c1 = RAIN_HIGH; u = (t - 0.5) / 0.5; }
+      return [
+        Math.round(lerp(c0[0], c1[0], u)),
+        Math.round(lerp(c0[1], c1[1], u)),
+        Math.round(lerp(c0[2], c1[2], u))
+      ];
+    }
+
+    function drawRainBlob(x, y, precip) {
+      var t = clamp01(precip / curPMAX);
+      var c = rainColor(t);
+      var alpha = Math.min(0.2 + 0.65 * t, 0.85);
+      var r = cellPx * 1.1;
+      var g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + alpha + ')');
+      g.addColorStop(1, 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+
+    // ---- Fetch ERA5 from Open-Meteo archive (runs in the browser) ---------
+    var BATCH = 150;          // locations per request
+    // Spans up to HOURLY_MAX_DAYS load at hourly resolution; longer spans load
+    // as daily steps (one frame per day) so even thousands of days stay usable.
+    var HOURLY_MAX_DAYS = 31;
+
+    // Baked-in key so the tool works with no manual entry. NOTE: committed to
+    // the repo and embedded in the file — if shared publicly, treat the key as
+    // exposed and rotate it. A key typed into the field overrides it.
+    var DEFAULT_API_KEY = 'ZdwB1dcASViMLo9s';
+    var API_KEY = DEFAULT_API_KEY;
+    try { var storedKey = localStorage.getItem('openmeteo_apikey'); if (storedKey) API_KEY = storedKey; } catch (e) {}
+
+    function archiveHost() {
+      return API_KEY ? 'https://customer-archive-api.open-meteo.com'
+                     : 'https://archive-api.open-meteo.com';
+    }
+    function buildArchiveUrl(pts, seriesParam, startDate, endDate) {
+      // seriesParam is the full query fragment, e.g.
+      //   'hourly=wind_speed_10m,wind_direction_10m,precipitation' or
+      //   'daily=wind_speed_10m_max,wind_direction_10m_dominant,precipitation_sum'
+      // 2 decimals (~1 km) is finer than the 0.25 deg model grid.
+      var lats = pts.map(function (p) { return p.lat.toFixed(2); }).join(',');
+      var lons = pts.map(function (p) { return p.lon.toFixed(2); }).join(',');
+      return archiveHost() + '/v1/archive'
+        + '?latitude=' + lats
+        + '&longitude=' + lons
+        + '&' + seriesParam
+        + '&wind_speed_unit=kmh'
+        + '&start_date=' + startDate
+        + '&end_date=' + endDate
+        + (API_KEY ? '&apikey=' + encodeURIComponent(API_KEY) : '')
+        + '&timezone=Australia%2FSydney';
+    }
+
+    function delay(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+    function log(m) { if (window.console && console.log) console.log('[era5] ' + m); }
+
+    var MAX_RETRIES = 3;
+    var REQ_TIMEOUT = 12000;
+    function fetchBatch(url, attempt, onStatus) {
+      attempt = attempt || 0;
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, REQ_TIMEOUT);
+      log('GET attempt ' + (attempt + 1) + ': ' + url);
+      return fetch(url, { signal: ctrl.signal }).then(function (r) {
+        clearTimeout(timer);
+        if ((r.status === 429 || r.status >= 500) && attempt < MAX_RETRIES) {
+          var ra = parseInt(r.headers.get('Retry-After'), 10);
+          var wait = isFinite(ra) ? ra * 1000 : Math.pow(2, attempt) * 800;
+          log('HTTP ' + r.status + ' -> retry in ' + wait + 'ms');
+          if (onStatus) onStatus('HTTP ' + r.status + ' — retrying (' + (attempt + 1) + '/' + MAX_RETRIES + ')…');
+          return delay(wait).then(function () { return fetchBatch(url, attempt + 1, onStatus); });
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }, function (netErr) {
+        clearTimeout(timer);
+        log('network error: ' + (netErr && (netErr.name + ' ' + netErr.message)));
+        if (attempt < MAX_RETRIES) {
+          var wait = Math.pow(2, attempt) * 800;
+          if (onStatus) onStatus('Network error — retrying (' + (attempt + 1) + '/' + MAX_RETRIES + ')…');
+          return delay(wait).then(function () { return fetchBatch(url, attempt + 1, onStatus); });
+        }
+        throw netErr;
+      });
+    }
+
+    function fetchSeries(makeUrl, assign, onStatus) {
+      var batches = [];
+      for (var i = 0; i < points.length; i += BATCH) {
+        batches.push(points.slice(i, i + BATCH));
+      }
+      var offset = 0, firstTimes = null;
+      var chain = Promise.resolve();
+      batches.forEach(function (b, bi) {
+        chain = chain.then(function () {
+          if (onStatus) onStatus('Loading… (' + (bi + 1) + '/' + batches.length + ')');
+          return fetchBatch(makeUrl(b), 0, onStatus);
+        }).then(function (data) {
+          var list = Array.isArray(data) ? data : [data];
+          if (bi === 0) firstTimes = (list[0].hourly || list[0].daily).time;
+          for (var j = 0; j < list.length; j++) {
+            assign(points[offset + j], list[j].hourly || list[j].daily);
+          }
+          offset += list.length;
+          if (bi < batches.length - 1) return delay(350);
+        });
+      });
+      return chain.then(function () {
+        if (offset !== points.length) {
+          throw new Error('Expected ' + points.length + ' locations, got ' + offset);
+        }
+        return firstTimes;
+      });
+    }
+
+    function describeError(err) {
+      if (/429/.test(err.message)) {
+        return 'Open-Meteo rate limit reached (HTTP 429). Wait a minute and try again.';
+      }
+      if (/403|401/.test(err.message)) {
+        return 'Archive API rejected the request (HTTP ' + err.message.replace(/\D/g, '') +
+               ') — your key may not include the Historical API. Check your Open-Meteo plan.';
+      }
+      if (/Failed to fetch|NetworkError|aborted|abort/i.test(err.message || err.name)) {
+        return 'Network error reaching Open-Meteo — it may be offline, blocked on your network, or blocked by a browser ad-blocker/privacy extension.';
+      }
+      return 'Could not load ERA5 (' + err.message + ').';
+    }
+
+    // ---- Load ERA5 (wind + rain) for the chosen date & span ---------------
+    function loadHistorical() {
+      var start = histDateInput.value;
+      if (!start) { validTimeEl.textContent = 'Pick a date first.'; return; }
+
+      // How many days to play over (chosen in the UI).
+      var days = parseInt(spanInput.value, 10);
+      if (!isFinite(days) || days < 1) days = 1;
+      if (days > 3650) days = 3650;
+      spanInput.value = String(days);
+
+      // Short spans animate hourly; long spans switch to one frame per day.
+      dailyMode = days > HOURLY_MAX_DAYS;
+      curPMAX = dailyMode ? PMAX_DAILY : PMAX_HOURLY;
+      var seriesParam = dailyMode
+        ? 'daily=wind_speed_10m_max,wind_direction_10m_dominant,precipitation_sum'
+        : 'hourly=wind_speed_10m,wind_direction_10m,precipitation';
+
+      var startD = new Date(start + 'T00:00:00');
+      var endD = new Date(startD.getTime() + (days - 1) * 86400000);
+      var maxD = new Date(Date.now() - 5 * 86400000);   // ERA5 ~5-day lag
+      if (endD > maxD) endD = maxD;
+      if (endD < startD) endD = startD;
+      var endStr = endD.toISOString().slice(0, 10);
+
+      statusEl.textContent = '';
+      spanNote.textContent = '';
+      retryBtn.style.display = 'none';
+      loadBtn.disabled = true;
+      playBtn.disabled = true;
+      slider.disabled = true;
+      rainBtn.disabled = true;
+      setPlaying(false);
+      validTimeEl.textContent = 'Loading ERA5…';
+
+      fetchSeries(function (b) { return buildArchiveUrl(b, seriesParam, start, endStr); },
+        function (p, blk) {
+          if (dailyMode) {
+            p.speeds = blk.wind_speed_10m_max;
+            p.dirs = blk.wind_direction_10m_dominant;
+            p.precip = blk.precipitation_sum;
+          } else {
+            p.speeds = blk.wind_speed_10m;
+            p.dirs = blk.wind_direction_10m;
+            p.precip = blk.precipitation;
+          }
+        },
+        function (t) { validTimeEl.textContent = 'ERA5: ' + t; })
+      .then(function (t) {
+        times = t;
+        frameCount = t.length;
+        frame = 0;
+        subMax = (t.length - 1) * SUBSTEPS;
+        slider.max = String(subMax);
+        slider.value = '0';
+        slider.disabled = false;
+        playBtn.disabled = false;
+        rainBtn.disabled = false;
+        loadBtn.disabled = false;
+        spanNote.textContent = frameCount + (dailyMode ? ' daily steps' : ' hourly steps')
+          + ' · ' + start + ' → ' + endStr
+          + (dailyMode ? ' · daily max wind / dominant dir / daily rain' : '');
+        updateLabel();
+        updateRainBtn();
+        setPlaying(true);   // auto-play once loaded
+      }).catch(function (err) {
+        if (window.console) console.error('[era5] load failed:', err);
+        loadBtn.disabled = false;
+        validTimeEl.textContent = 'ERA5 unavailable';
+        var testUrl = buildArchiveUrl(points.slice(0, Math.min(BATCH, points.length)),
+                                      seriesParam, start, endStr);
+        statusEl.innerHTML = describeError(err) + ' '
+          + '<a href="' + testUrl + '" target="_blank" rel="noopener">Open the data URL directly</a> '
+          + '— if that page also fails it is your network/extension or plan.';
+        retryBtn.style.display = 'inline-block';
+      });
+    }
+
+    // ---- Controls ---------------------------------------------------------
+    function setPlaying(on) {
+      playing = on && frameCount > 0;
+      playBtn.textContent = playing ? 'Pause' : 'Play';
+      lastStep = performance.now();
+    }
+    function updateRainBtn() {
+      var loaded = frameCount > 0;
+      rainBtn.textContent = loaded ? (showRain ? 'Rain: on' : 'Rain: off') : 'Rain';
+      rainBtn.classList.toggle('active', showRain);
+      rainLegend.style.display = showRain ? 'flex' : 'none';
+    }
+
+    loadBtn.addEventListener('click', loadHistorical);
+    retryBtn.addEventListener('click', loadHistorical);
+    playBtn.addEventListener('click', function () { setPlaying(!playing); });
+    slider.addEventListener('input', function () {
+      frame = parseInt(slider.value, 10) || 0;
+      updateLabel();
+    });
+    speedSel.addEventListener('change', function () {
+      speedMult = parseFloat(speedSel.value) || 1;
+    });
+    rainBtn.addEventListener('click', function () {
+      if (frameCount === 0) return;
+      showRain = !showRain;
+      updateRainBtn();
+    });
+
+    // Open-Meteo API key: stored in localStorage; overrides the baked-in key.
+    var apiKeyInput = document.getElementById('api-key');
+    var apiKeySave = document.getElementById('api-key-save');
+    apiKeyInput.value = API_KEY;
+    function applyApiKey() {
+      API_KEY = apiKeyInput.value.trim();
+      try {
+        if (API_KEY) localStorage.setItem('openmeteo_apikey', API_KEY);
+        else localStorage.removeItem('openmeteo_apikey');
+      } catch (e) {}
+      if (frameCount > 0) loadHistorical();   // re-fetch current date with new key
+    }
+    apiKeySave.addEventListener('click', applyApiKey);
+    apiKeyInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') applyApiKey(); });
+
+    // ---- Render loop ------------------------------------------------------
+    function render(now) {
+      if (playing && frameCount > 0) {
+        var interval = STEP_MS / speedMult;
+        var elapsed = now - lastStep;
+        if (elapsed >= interval) {
+          var steps = Math.floor(elapsed / interval);
+          lastStep += steps * interval;
+          frame = (frame + steps) % (subMax + 1);
+          slider.value = String(frame);
+          updateLabel();
+        }
+      }
+
+      ctx.clearRect(0, 0, W, H);
+
+      if (frameCount === 0) { requestAnimationFrame(render); return; }
+
+      var idx = subIndices(frame);
+      var i, p;
+
+      for (i = 0; showRain && i < points.length; i++) {
+        p = points[i];
+        if (!p.precip) continue;
+        var precip = sampleScalar(p.precip, idx);
+        if (precip > PMIN) drawRainBlob(p.sx, p.sy, precip);
+      }
+
+      for (i = 0; i < points.length; i++) {
+        p = points[i];
+        if (!p.speeds) continue;
+        var wind = sampleWind(p, idx);
+        if (!wind) continue;
+        var intensity = speedToIntensity(wind.speed);
+        var sizeT = Math.pow(intensity, SIZE_GAMMA);
+        var length = lerp(IDLE_LEN, PEAK_LEN, sizeT);
+        var width = lerp(IDLE_WIDTH, PEAK_WIDTH, sizeT);
+        drawArrow(p.sx, p.sy, wind.angle, length, mixColor(intensity), width);
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    // ---- Wire up ----------------------------------------------------------
+    function relayout() {
+      resizeCanvas();
+      projectPoints();
+    }
+    window.addEventListener('resize', relayout);
+    map.whenReady(function () {
+      buildGridPoints();
+      relayout();
+      var maxD = new Date(Date.now() - 5 * 86400000);
+      var defD = new Date(Date.now() - 35 * 86400000);
+      histDateInput.min = '1940-01-01';   // ERA5 archive start
+      histDateInput.max = maxD.toISOString().slice(0, 10);
+      histDateInput.value = defD.toISOString().slice(0, 10);
+      requestAnimationFrame(render);
+    });
+  </script>
+</body>
+</html>
